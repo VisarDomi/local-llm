@@ -1,0 +1,63 @@
+{
+  "model": "default",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are investigating the km-explorer project to understand its state management architecture."
+    },
+    {
+      "role": "user",
+      "content": "In the km-explorer project, find all files that use Svelte 5 $state or $derived runes. I want to understand the reactive state graph \u2014 what state exists, where it's declared, and how derived values flow between components."
+    }
+  ],
+  "max_tokens": 1024,
+  "temperature": 0,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "grep_search",
+        "description": "Search for a pattern in files",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "description": "Regex pattern to search for"
+            },
+            "path": {
+              "type": "string",
+              "description": "Directory to search in"
+            },
+            "glob": {
+              "type": "string",
+              "description": "File glob pattern"
+            }
+          },
+          "required": [
+            "pattern"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "Path to the file to read"
+            }
+          },
+          "required": [
+            "file_path"
+          ]
+        }
+      }
+    }
+  ]
+}

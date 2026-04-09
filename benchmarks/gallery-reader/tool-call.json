@@ -1,0 +1,63 @@
+{
+  "model": "default",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are investigating the gallery-reader project to understand its image loading pipeline."
+    },
+    {
+      "role": "user",
+      "content": "In the gallery-reader project, trace how gallery images flow from the server to the browser. Find all fetch() calls related to image loading, sprite generation, and blob URL management. I want to understand the full pipeline from request to display."
+    }
+  ],
+  "max_tokens": 1024,
+  "temperature": 0,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "grep_search",
+        "description": "Search for a pattern in files",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "description": "Regex pattern to search for"
+            },
+            "path": {
+              "type": "string",
+              "description": "Directory to search in"
+            },
+            "glob": {
+              "type": "string",
+              "description": "File glob pattern"
+            }
+          },
+          "required": [
+            "pattern"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "Path to the file to read"
+            }
+          },
+          "required": [
+            "file_path"
+          ]
+        }
+      }
+    }
+  ]
+}

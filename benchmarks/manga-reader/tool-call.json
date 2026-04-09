@@ -1,0 +1,63 @@
+{
+  "model": "default",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are investigating the manga-reader project to understand how browser sessions are managed."
+    },
+    {
+      "role": "user",
+      "content": "Find all places in the manga-reader codebase where Playwright's chromium.launchPersistentContext is called. I want to understand how many different browser contexts are created and what their lifecycle is."
+    }
+  ],
+  "max_tokens": 1024,
+  "temperature": 0,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "grep_search",
+        "description": "Search for a pattern in files",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "description": "Regex pattern to search for"
+            },
+            "path": {
+              "type": "string",
+              "description": "Directory to search in"
+            },
+            "glob": {
+              "type": "string",
+              "description": "File glob pattern"
+            }
+          },
+          "required": [
+            "pattern"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "Path to the file to read"
+            }
+          },
+          "required": [
+            "file_path"
+          ]
+        }
+      }
+    }
+  ]
+}

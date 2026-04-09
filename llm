@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LLM_DIR="$(cd "$(dirname "$0")" && pwd)"
+MODEL_DIR="$LLM_DIR/models"
+ENGINE_DIR="$LLM_DIR/engine/llama.cpp/build/bin"
+PIDFILE="$LLM_DIR/.llm-server.pid"
+LOGFILE="$LLM_DIR/.llm-server.log"
+
+declare -A TIER_MODEL=(
+  [workhorse]="qwen3.5-35b-a3b-iq4nl.gguf"
+  [workhorse-full]="qwen3.5-35b-a3b-iq4nl.gguf"
+  [interactive]="qwen3.5-9b-iq4nl.gguf"
+)
+
+declare -A TIER_PORT=(
+  [workhorse]="8010"
+  [workhorse-full]="8010"
+  [interactive]="8100"
+)
+
+declare -A TIER_FLAGS=(
+  [workhorse]="-ngl 99 -ot blk\.([0-2][0-9]|3[0-5])\.ffn_.*_exps\.weight=CPU --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 180000"
+  [workhorse-full]="-ngl 99 -cmoe --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 262144"
+  [interactive]="-ngl 99 --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 262144"
+)
+
+red()    { printf '\033[0;31m%s\033[0m\n' "$*"; }
+green()  { printf '\033[0;32m%s\033[0m\n' "$*"; }
+yellow() { printf '\033[0;33m%s\033[0m\n' "$*"; }
+dim()    { printf '\033[0;90m%s\033[0m\n' "$*"; }
+
+get_pid() {
+  [[ -f "$PIDFILE" ]] && cat "$PIDFILE" || echo ""
+}
+
+is_running() {
+  local pid
+  pid=$(get_pid)
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+wait_for_health() {
+  local port="$1" timeout=60 elapsed=0
+  while (( elapsed < timeout )); do
+    if curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    (( elapsed++ ))
+  done
+  return 1
+}
+
+cmd_stop() {
+  if is_running; then
+    local pid
+    pid=$(get_pid)
+    kill "$pid" 2>/dev/null
+    local waited=0
+    while kill -0 "$pid" 2>/dev/null && (( waited < 10 )); do
+      sleep 1
+      (( waited++ ))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+    green "Stopped LLM server (pid $pid)"
+  else
+    dim "No LLM server running"
+  fi
+}
+
+cmd_status() {
+  if is_running; then
+    local pid
+    pid=$(get_pid)
+    local tier_info
+    tier_info=$(head -1 "$LOGFILE" 2>/dev/null || echo "unknown")
+    green "LLM server running (pid $pid)"
+    echo "$tier_info"
+    if command -v nvidia-smi &>/dev/null; then
+      nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits | \
+        awk -F', ' '{printf "VRAM: %s / %s MB\n", $1, $2}'
+    fi
+  else
+    dim "No LLM server running"
+  fi
+}
+
+cmd_switch() {
+  local tier="$1"
+  shift
+
+  if [[ -z "${TIER_MODEL[$tier]+x}" ]]; then
+    red "Unknown tier: $tier"
+    echo "Available: planner, interactive, speed"
+    exit 1
+  fi
+
+  local model="$MODEL_DIR/${TIER_MODEL[$tier]}"
+  local port="${TIER_PORT[$tier]}"
+  local server="$ENGINE_DIR/llama-server"
+
+  if [[ ! -f "$model" ]]; then
+    red "Model not found: $model"
+    echo "Download it to $MODEL_DIR/"
+    exit 1
+  fi
+
+  if [[ ! -f "$server" ]]; then
+    red "llama-server not found: $server"
+    echo "Build llama.cpp first: cd $LLM_DIR/engine/llama.cpp && cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 && cmake --build build --config Release -j\$(nproc)"
+    exit 1
+  fi
+
+  cmd_stop
+
+  local default_flags="${TIER_FLAGS[$tier]}"
+  local override_flags="$*"
+  local final_flags="$default_flags"
+
+  if [[ -n "$override_flags" ]]; then
+    local -a override_arr=($override_flags)
+    local i=0
+    while (( i < ${#override_arr[@]} )); do
+      local flag="${override_arr[$i]}"
+      if [[ "$flag" == -* ]]; then
+        local value=""
+        if (( i + 1 < ${#override_arr[@]} )) && [[ "${override_arr[$((i+1))]}" != -* ]]; then
+          value="${override_arr[$((i+1))]}"
+          final_flags=$(echo "$final_flags" | sed -E "s|${flag}[[:space:]]+[^-][^[:space:]]*||g")
+          final_flags="$final_flags $flag $value"
+          (( i += 2 ))
+        else
+          final_flags="$final_flags $flag"
+          (( i++ ))
+        fi
+      else
+        (( i++ ))
+      fi
+    done
+  fi
+
+  echo "# tier=$tier model=$(basename "$model") port=$port $(date -Iseconds)" > "$LOGFILE"
+  echo "# flags: $final_flags" >> "$LOGFILE"
+
+  yellow "Starting $tier tier on port $port..."
+  dim "Model: $(basename "$model")"
+  dim "Flags: $final_flags"
+
+  $server -m "$model" --port "$port" $final_flags >> "$LOGFILE" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PIDFILE"
+
+  if wait_for_health "$port"; then
+    green "Ready on http://localhost:$port/v1"
+  else
+    red "Server failed to start within 60s. Check $LOGFILE"
+    exit 1
+  fi
+}
+
+cmd_bench() {
+  local model="$1"
+  shift
+  local bench="$ENGINE_DIR/llama-bench"
+
+  if [[ ! -f "$bench" ]]; then
+    red "llama-bench not found. Build llama.cpp first."
+    exit 1
+  fi
+
+  if [[ ! -f "$model" ]] && [[ -f "$MODEL_DIR/$model" ]]; then
+    model="$MODEL_DIR/$model"
+  fi
+
+  local timestamp basename outfile
+  timestamp=$(date +%Y-%m-%d-%H%M)
+  basename=$(basename "$model" .gguf)
+  outfile="$LLM_DIR/benchmarks/${timestamp}-${basename}.txt"
+
+  yellow "Benchmarking $(basename "$model")..."
+  $bench -m "$model" -ngl 99 -fa 1 "$@" | tee "$outfile"
+  green "Saved to $outfile"
+}
+
+cmd_bench_parallel() {
+  local model="$1"
+  shift
+  local bench="$ENGINE_DIR/llama-batched-bench"
+
+  if [[ ! -f "$bench" ]]; then
+    red "llama-batched-bench not found. Build llama.cpp first."
+    exit 1
+  fi
+
+  if [[ ! -f "$model" ]] && [[ -f "$MODEL_DIR/$model" ]]; then
+    model="$MODEL_DIR/$model"
+  fi
+
+  local timestamp basename outfile
+  timestamp=$(date +%Y-%m-%d-%H%M)
+  basename=$(basename "$model" .gguf)
+  outfile="$LLM_DIR/benchmarks/${timestamp}-${basename}-parallel.txt"
+
+  yellow "Parallel benchmarking $(basename "$model")..."
+  $bench -m "$model" -ngl 99 -fa 1 \
+    -c 32768 -b 2048 -ub 512 \
+    -npp 512,2048 -ntg 128,512 -npl 1,2,4,8 \
+    "$@" | tee "$outfile"
+  green "Saved to $outfile"
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  switch)
+    tier="${1:-}"
+    shift || true
+    if [[ -z "$tier" ]]; then
+      red "Usage: llm switch <planner|interactive|speed> [flags...]"
+      exit 1
+    fi
+    cmd_switch "$tier" "$@"
+    ;;
+  stop)
+    cmd_stop
+    ;;
+  status)
+    cmd_status
+    ;;
+  bench)
+    model="${1:-}"
+    shift || true
+    if [[ -z "$model" ]]; then
+      red "Usage: llm bench <model.gguf> [extra flags...]"
+      exit 1
+    fi
+    cmd_bench "$model" "$@"
+    ;;
+  bench-parallel)
+    model="${1:-}"
+    shift || true
+    if [[ -z "$model" ]]; then
+      red "Usage: llm bench-parallel <model.gguf> [extra flags...]"
+      exit 1
+    fi
+    cmd_bench_parallel "$model" "$@"
+    ;;
+  help|--help|-h)
+    cat <<'HELP'
+llm — local LLM tier switcher
+
+Commands:
+  switch <tier> [flags...]   Start a tier (planner, interactive, speed)
+                             Extra flags override tier defaults
+  stop                       Stop the running server
+  status                     Show what's running + VRAM usage
+
+  bench <model> [flags...]          Single-stream benchmark
+  bench-parallel <model> [flags...] Parallel scaling benchmark (1,2,4,8)
+
+Tiers:
+  workhorse       21 t/s  35B-A3B IQ4_NL (regex, 180K ctx), port 8010, fast analysis
+  workhorse-full  15 t/s  35B-A3B IQ4_NL (-cmoe, 262K ctx), port 8010, full context
+  interactive     41 t/s  9B IQ4_NL (262K ctx), port 8100, code gen + tool calling
+
+Examples:
+  llm switch workhorse
+  llm switch interactive -c 65536
+  llm bench qwen3.5-9b-iq4nl.gguf
+  llm bench-parallel qwen3.5-9b-iq4nl.gguf
+  llm stop
+HELP
+    ;;
+  *)
+    red "Unknown command: $cmd"
+    echo "Run 'llm help' for usage"
+    exit 1
+    ;;
+esac

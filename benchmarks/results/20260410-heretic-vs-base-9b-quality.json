@@ -1,0 +1,14 @@
+{
+  "test": "km-explorer context-scale-35k, code review for race conditions",
+  "models": {
+    "heretic": "qwen3.5-9b-heretic-i1-iq4nl.gguf",
+    "base": "qwen3.5-9b-iq4nl.gguf"
+  },
+  "scores": {
+    "heretic": {"accuracy": 3, "specificity": 4, "actionability": 3, "structure": 4, "total": 14},
+    "base": {"accuracy": 4, "specificity": 3, "actionability": 4, "structure": 3, "total": 14}
+  },
+  "verdict": "Tie at 14/20. Heretic has better presentation (code quotes, formatting). Base has better diagnosis accuracy (identifies real timing window vs fabricated WriteGate race). Base edges ahead for code review — correctness > presentation.",
+  "key_finding": "Both models get line numbers wrong by 80-100+ lines. Neither understands WriteGate cancel-on-acquire ownership semantics.",
+  "evaluator": "Claude Opus 4.6"
+}

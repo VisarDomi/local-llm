@@ -1,0 +1,15 @@
+{
+  "model": "default",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are applying a bug fix from one project to another project that has the same bug."
+    },
+    {
+      "role": "user",
+      "content": "Here is a bug fix that was applied to the cashback project's service worker:\n\n```diff\ndiff --git a/v1/cashback-deck/static/sw.js b/v1/cashback-deck/static/sw.js\nindex 4086d6b..9acb974 100644\n--- a/v1/cashback-deck/static/sw.js\n+++ b/v1/cashback-deck/static/sw.js\n@@ -8,8 +8,7 @@ self.addEventListener('activate', (event) => {\n \tevent.waitUntil(clients.claim());\n });\n \n-self.addEventListener('fetch', (event) => {\n-\t// Pass through all requests to the network\n-\t// This minimal fetch handler is required for iOS 18 PWA installability\n-\tevent.respondWith(fetch(event.request));\n+self.addEventListener('fetch', () => {\n+\t// No-op: listener must exist for iOS 18 PWA installability,\n+\t// but not calling respondWith() lets the browser handle requests natively\n });\n\n```\n\nThe km-explorer project has the same bug in its service worker. Here is the km-explorer's current sw.js:\n\n```javascript\nconst CACHE_NAME = 'pwa-v1';\n\nself.addEventListener('install', () => {\n\tself.skipWaiting();\n});\n\nself.addEventListener('activate', (event) => {\n\tevent.waitUntil(clients.claim());\n});\n\nself.addEventListener('fetch', (event) => {\n\t// Pass through all requests to the network\n\t// This minimal fetch handler is required for iOS 18 PWA installability\n\tevent.respondWith(fetch(event.request));\n});\n\n```\n\nApply the same fix to the km-explorer service worker. The SW fetch handler must not use respondWith(fetch()) because it breaks ES module caching \u2014 the browser evaluates modules multiple times instead of once. The fix is to have a no-op fetch listener that exists for iOS 18 PWA installability but does not call respondWith()."
+    }
+  ],
+  "max_tokens": 1024,
+  "temperature": 0
+}

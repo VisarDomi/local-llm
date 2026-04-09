@@ -1,0 +1,63 @@
+{
+  "model": "default",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a code analysis assistant with access to tools for searching and reading files in the video-platform project."
+    },
+    {
+      "role": "user",
+      "content": "In the video-platform project, find all files that import from the 'shared' package and determine what exports they use. I want to understand the dependency surface between packages/shared and its consumers."
+    }
+  ],
+  "max_tokens": 1024,
+  "temperature": 0,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "grep_search",
+        "description": "Search for a pattern in files",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "description": "Regex pattern to search for"
+            },
+            "path": {
+              "type": "string",
+              "description": "Directory to search in"
+            },
+            "glob": {
+              "type": "string",
+              "description": "File glob pattern"
+            }
+          },
+          "required": [
+            "pattern"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "Path to the file to read"
+            }
+          },
+          "required": [
+            "file_path"
+          ]
+        }
+      }
+    }
+  ]
+}

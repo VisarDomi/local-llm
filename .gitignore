@@ -1,0 +1,4 @@
+models/*.gguf
+engine/llama.cpp/
+.llm-server.pid
+.llm-server.log
