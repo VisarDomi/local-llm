@@ -284,6 +284,9 @@ Eval approach: git diffs are NOT ground truth for exact match. They generate rea
 7. Set up Pi harness connecting to llm switcher
 8. Test PR #20700 (MTP) — fork, cherry-pick, rebuild, benchmark
 9. Consider testing Qwen3.5-35B-A3B Q8_0 (36.9GB) — fits in 32GB RAM with -cmoe
+10. Test reasoning ON for 35B-A3B (the winner) — research how to use thinking tokens effectively with large context, what max_tokens budget is needed, quality impact vs reasoning off. Internet research task.
+11. After harness setup: find use cases for 0.8B/2B/4B parallel (300+ t/s aggregate). These models failed at code review but may excel at: autocomplete, inline suggestions, structured extraction, JSON formatting, simple tool routing, draft generation for larger model to refine. Research what the LocalLLaMA community uses sub-4B models for in agentic pipelines.
+12. Update HTML wiki at research.visar.veron3.space with real benchmark data
 
 ## Directory Structure
 

@@ -35,6 +35,12 @@ Ask the user which of these to prioritize:
 ### Higher quant for 35B
 - We tested IQ4_NL (17.8GB). The Q8_0 is 36.9GB — fits in 32GB RAM with -cmoe. Would improve quality significantly. Worth testing overnight.
 
+### Reasoning ON for 35B winner
+- We always tested with --reasoning off. The 35B-A3B might produce much better analysis WITH thinking tokens, especially on complex tasks (the 30s timing bug that no local model found). Need to research: what max_tokens budget, how to balance thinking vs output, quality impact. Internet research first.
+
+### Use cases for small models (0.8B/2B/4B at 300+ t/s parallel)
+- These failed at code review (5-10/25) but 300+ t/s aggregate is valuable. After harness setup, research what the community uses sub-4B models for: autocomplete, structured extraction, JSON formatting, tool routing, draft-then-refine pipelines, embeddings. There's a use case — we just haven't found it yet.
+
 ### Wiki / report updates
 - The HTML wiki at research.visar.veron3.space has outdated numbers from before benchmarking. Needs update with real measured data.
 
