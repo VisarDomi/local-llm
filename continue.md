@@ -32,8 +32,8 @@ Ask the user which of these to prioritize:
 - PR #20700: Qwen3.5 native MTP (multi-token prediction). Could 1.5-2x generation speed. Needs fork + cherry-pick + rebuild.
 - PR #21594: --reasoning-budget fix. Currently the flag is ignored.
 
-### Higher quant for 35B
-- We tested IQ4_NL (17.8GB). The Q8_0 is 36.9GB — fits in 32GB RAM with -cmoe. Would improve quality significantly. Worth testing overnight.
+### Higher quant for 35B — NOT WORTH IT
+- IQ4_NL (17.8GB) already OOMs with regex offload at 188K context. Higher quants force -cmoe only (15 t/s), losing the regex fast path (21 t/s). The speed penalty outweighs quality gain. IQ4_NL is the ceiling for this hardware.
 
 ### Reasoning ON for 35B winner
 - We always tested with --reasoning off. The 35B-A3B might produce much better analysis WITH thinking tokens, especially on complex tasks (the 30s timing bug that no local model found). Need to research: what max_tokens budget, how to balance thinking vs output, quality impact. Internet research first.
