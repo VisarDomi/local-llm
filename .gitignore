@@ -1,8 +1,8 @@
 models/*.gguf
 
-# Local llama.cpp build output lives inside nested repos; ignore only generated builds.
-engine/dev/llama.cpp/build/
-engine/stable/llama.cpp/build/
+# Nested engine repos are managed separately from the parent workspace.
+engine/dev/
+engine/stable/
 
 # Local Python tooling environment for GGUF conversion/build helpers.
 engine/venv/
