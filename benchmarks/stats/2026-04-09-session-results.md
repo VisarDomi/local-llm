@@ -102,18 +102,18 @@ N=5 sweet spot. CPU sampling is the ceiling at ~350-370 t/s aggregate.
 
 | File | Size | Location |
 |------|------|----------|
-| qwen3.5-0.8b-q4km.gguf | 508MB | ~/Documents/llm/models/ |
-| qwen3.5-0.8b-q8.gguf | 775MB | ~/Documents/llm/models/ |
-| qwen3.5-0.8b-iq2xxs.gguf | 323MB | ~/Documents/llm/models/ |
-| qwen3.5-2b-q4km.gguf | 1.2GB | ~/Documents/llm/models/ |
-| qwen3.5-2b-q8.gguf | 1.9GB | ~/Documents/llm/models/ |
-| qwen3.5-2b-iq2xxs.gguf | 680MB | ~/Documents/llm/models/ |
-| qwen3.5-4b-q4km.gguf | 2.6GB | ~/Documents/llm/models/ |
-| qwen3.5-4b-q2kxl.gguf | 1.9GB | ~/Documents/llm/models/ |
-| qwen3.5-9b-q5km.gguf | 6.2GB | ~/Documents/llm/models/ |
-| qwen3.5-27b-iq2m.gguf | 9.5GB | ~/Documents/llm/models/ |
-| qwen3.5-35b-a3b-iq2m.gguf | 10.6GB | ~/Documents/llm/models/ |
-| qwen3.5-35b-a3b-iq3xxs.gguf | 12.2GB | ~/Documents/llm/models/ |
+| qwen3.5-0.8b-q4km.gguf | 508MB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-0.8b-q8.gguf | 775MB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-0.8b-iq2xxs.gguf | 323MB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-2b-q4km.gguf | 1.2GB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-2b-q8.gguf | 1.9GB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-2b-iq2xxs.gguf | 680MB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-4b-q4km.gguf | 2.6GB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-4b-q2kxl.gguf | 1.9GB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-9b-q5km.gguf | 6.2GB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-27b-iq2m.gguf | 9.5GB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-35b-a3b-iq2m.gguf | 10.6GB | ~/Documents/work/ai/local-llm/models/ |
+| qwen3.5-35b-a3b-iq3xxs.gguf | 12.2GB | ~/Documents/work/ai/local-llm/models/ |
 
 ## 4B Q8_0 Context Scaling (clean restart each, Q8 KV cache, 262K max context)
 
@@ -169,7 +169,7 @@ llama-server -m qwen3.5-35b-a3b-iq4nl.gguf -ngl 99 \
   --cache-type-k q8_0 --cache-type-v q8_0 -c 262144 --port 8200
 ```
 
-Tests run with: `run-test.sh ~/Documents/llm/benchmarks/<file>.json`
+Tests run with: `run-test.sh ~/Documents/work/ai/local-llm/benchmarks/<file>.json`
 Tests 1-3 clean (no cache). Tests 4-5: test 4 redone with clean restart. Test 5 estimated from 788s wall time.
 
 | Context | Tokens | PP t/s | TG t/s | Wall | VRAM peak |
@@ -192,7 +192,7 @@ llama-server -m qwen3.5-9b-iq3xxs.gguf -ngl 99 --no-mmap --jinja --reasoning off
   --cache-type-k q4_0 --cache-type-v q4_0 -c 262144 --port 8200
 ```
 
-Test: `run-test.sh ~/Documents/llm/benchmarks/km-explorer/context-dump.json`
+Test: `run-test.sh ~/Documents/work/ai/local-llm/benchmarks/km-explorer/context-dump.json`
 
 | Context | Tokens | PP t/s | TG t/s | Wall | VRAM peak |
 |---------|--------|--------|--------|------|-----------|

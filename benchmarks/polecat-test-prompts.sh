@@ -59,7 +59,7 @@ BODY1=$(cat <<'ENDJSON'
     },
     {
       "role": "user",
-      "content": "I need to find all files in the manga-reader project that import from fetchJson.ts. The project is at ~/Documents/wip/manga-repos/manga-reader/. Use the grep tool to search for this import pattern."
+      "content": "I need to find all files in the manga-reader project that import from fetchJson.ts. The project is at ~/Documents/work/manga/manga-reader/. Use the grep tool to search for this import pattern."
     }
   ],
   "tools": [

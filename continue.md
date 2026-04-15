@@ -1,103 +1,86 @@
 # Continue from here
 
-Read decisions.md first — it has all benchmark data, architecture decisions, and commands.
+Read decisions.md first — it has benchmark data, architecture decisions, engine build commands, and directory structure.
 
-## What happened
-
-Over two sessions we built a complete local LLM benchmarking and serving infrastructure:
-
-1. **Built llama.cpp** with CUDA 13.0 for RTX 3060 12GB
-2. **Benchmarked 7 model sizes** (0.8B through 35B MoE) across multiple quants
-3. **Found the two winning models**: 9B IQ4_NL (41 t/s, code gen) and 35B-A3B IQ4_NL (21 t/s, code review)
-4. **Tested context scaling** from 35K to 241K tokens on real project codebases
-5. **Discovered key optimizations**: --reasoning off (critical), Q8 KV cache with activation rotation, regex expert offloading for MoE, prompt caching (15x speedup on follow-ups)
-6. **Built a test suite** with 21 per-project test files from real git history + 5 context scale tests using real tokenizer counts
-7. **Compared heretic fine-tune** to base 9B: tie on quality, base more accurate on diagnosis
-
-## What to work on next
-
-Ask the user which of these to prioritize:
-
-### More quality testing
-- The heretic vs base comparison was only on one task (code review). More tasks needed: tool calling, Svelte 5 generation, error diagnosis, git diff replay.
-- The per-project test suites (git replay, tool calling, cross-project SW fix) haven't been run on any model yet. These are in benchmarks/<project>/.
-- Run the polecat 5-test suite on the new IQ4_NL quants (we only ran it on Q5_K_M and IQ2_M before).
+## What happened this session (session 3)
 
 ### Harness setup
-- Pi Coding Agent, OpenCode, or Gastown — none are set up yet.
-- The `llm` script serves OpenAI-compatible API. Harness just points to localhost:8010 or 8100.
-- Pi is proven with Qwen 3.5 but dev created a company. OpenCode needs investigation. Gastown is multi-agent (ambitious).
+1. **Pi Coding Agent** — installed (v0.66.1), configured at `~/.pi/agent/models.json` with single `local/default` provider. Alias `pi` in `~/.bash_aliases`. Works with 9B on chat completions. Known issue: 9B overwrites files instead of using edit tool (known small-model failure mode).
+2. **Codex CLI** — installed (v0.120.0), configured at `~/.codex/config.toml`. Default uses OpenAI sub, local provider configured. BUT: Codex only speaks Responses API (`/v1/responses`), not Chat Completions. Needs dev build.
+3. **Researched all CLI agents** — found non-React options: Codex (Rust/Ratatui), Crush (Go/Bubbletea), Aider (Python/prompt_toolkit), OpenCode (TS/Zig). Pi is actually custom TUI, not React.
 
-### llama.cpp PRs
-- PR #20700: Qwen3.5 native MTP (multi-token prediction). Could 1.5-2x generation speed. Needs fork + cherry-pick + rebuild.
-- PR #21594: --reasoning-budget fix. Currently the flag is ignored.
+### Infrastructure changes
+1. **Unified port**: All tiers now serve on port 8100 (was 8010/8100/8200). Pi/Codex/run-test.sh all point to 8100.
+2. **Dual engine**: `engine/stable/` (tracks upstream master) and `engine/dev/` (VisarDomi/llama.cpp fork). `llm switch <tier> --dev` flag selects engine.
+3. **Daily auto-build**: `llm-stable-build.timer` at 3:30am pulls master and rebuilds stable. Uses ccache.
+4. **run-test.sh**: Auto-detects running server on port 8100 (no more wrong-port errors).
+5. **Python venv**: `~/Documents/work/ai/local-llm/engine/venv/` for convert_hf_to_gguf.py deps (torch CPU, transformers, gguf).
 
-### Higher quant for 35B — NOT WORTH IT
-- IQ4_NL (17.8GB) already OOMs with regex offload at 188K context. Higher quants force -cmoe only (15 t/s), losing the regex fast path (21 t/s). The speed penalty outweighs quality gain. IQ4_NL is the ceiling for this hardware.
+### MTP experiment (PR #20700) — FAILED, cleaned up
+- Converted Qwen3.5-9B with MTP tensors using dev branch converter
+- Used Unsloth's imatrix (`~/Documents/work/ai/local-llm/models/qwen3.5-9b-imatrix-unsloth.gguf` — kept, 5MB)
+- Result: "speculative decoding not supported by this context" — Qwen3.5's hybrid SSM architecture breaks it
+- Even when server loaded, output was garbage (stuttering repetition), no speed gain
+- **Verdict**: Wait for PR to mature and for Unsloth to publish MTP-enabled GGUFs
+- All MTP model files deleted (F16, IQ4_NL, HF safetensors)
 
-### Reasoning ON for 35B winner
-- We always tested with --reasoning off. The 35B-A3B might produce much better analysis WITH thinking tokens, especially on complex tasks (the 30s timing bug that no local model found). Need to research: what max_tokens budget, how to balance thinking vs output, quality impact. Internet research first.
+### Quantization knowledge gained
+- **Unsloth secret sauce**: Dynamic per-layer mixed precision + proprietary chat-optimized calibration dataset (not published)
+- **mradermacher**: Standard llama.cpp + wiki imatrix, automated at scale
+- **imatrix critical for IQ4_NL and below**: Without it, significant quality loss
+- **Unsloth's imatrix is downloadable**: `imatrix_unsloth.gguf_file` from their HF repos
+- **llama-quantize supports mixed precision**: `--tensor-type "pattern=type"` with regex matching
 
-### Use cases for small models (0.8B/2B/4B at 300+ t/s parallel)
-- These failed at code review (5-10/25) but 300+ t/s aggregate is valuable. After harness setup, research what the community uses sub-4B models for: autocomplete, structured extraction, JSON formatting, tool routing, draft-then-refine pipelines, embeddings. There's a use case — we just haven't found it yet.
+## What to do next (in priority order)
 
-### Wiki / report updates
-- The HTML wiki at research.visar.veron3.space has outdated numbers from before benchmarking. Needs update with real measured data.
+### 1. Build dev engine and test Codex CLI (IMMEDIATE)
+The dev fork has PR #19720 (Responses API) merged but NOT rebuilt yet.
+```bash
+cmake --build ~/Documents/work/ai/local-llm/engine/dev/llama.cpp/build --config Release -j$(nproc)
+llm switch interactive --dev
+# Test Responses API
+curl http://localhost:8100/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{"model":"default","input":"Say hello","max_output_tokens":50}'
+# If that works, test Codex CLI
+codex --model qwen3.5-9b --provider local
+```
 
-## How to use subagents efficiently
+### 2. Set up Crush or Aider (works TODAY, no PR needed)
+Both speak Chat Completions. Good alternatives if Codex/Responses API is flaky.
+- **Crush** (Go/Bubbletea, 22.8K stars): `base_url` in JSON config
+- **Aider** (Python, 43K stars): `aider --openai-api-base http://localhost:8100/v1 --openai-api-key none`
 
-This session bloated context with tool calls and polling. For the next session:
-- Send research/web queries to background agents
-- Don't poll for results — wait for task notifications
-- For benchmarks: give the user commands to run manually instead of running them yourself (avoids zombie processes and timeout issues)
-- Save ALL test results permanently via run-test.sh (writes to benchmarks/results/)
-- Use Opus agents for quality evaluation — save their output to benchmarks/results/
+### 3. Test 35B on Pi (quality comparison)
+Pi worked with 9B but had file-overwrite issues. Test with 35B to see if the larger model handles tool selection better.
+```bash
+llm switch workhorse
+pi
+```
 
-## Key commands
+### 4. Remaining from previous sessions
+- Run per-project test suites on 9B/35B
+- PR #21594: --reasoning-budget fix
+- Reasoning ON for 35B (research thinking token budgets)
+- Small model use cases (0.8B/2B/4B)
+- Wiki updates
+
+## Key commands (updated)
 
 ```bash
-# Switch tiers
-llm switch interactive          # 9B, 41 t/s, 262K context
-llm switch workhorse            # 35B regex, 21 t/s, 180K context
-llm switch workhorse-full       # 35B -cmoe, 15 t/s, 262K context
+# All tiers now on port 8100
+llm switch interactive              # 9B stable, 41 t/s
+llm switch interactive --dev        # 9B dev engine (Responses API)
+llm switch workhorse                # 35B regex, 21 t/s
+llm switch workhorse-full           # 35B cmoe, 15 t/s, 262K
 
-# Run a test (saves results permanently)
-~/Documents/llm/benchmarks/run-test.sh ~/Documents/llm/benchmarks/context-scale-35k.json
-~/Documents/llm/benchmarks/run-test.sh ~/Documents/llm/benchmarks/km-explorer/context-dump.json --tag heretic-km
+# Harnesses
+pi                                  # Pi with local model (alias)
+colo                                # Codex CLI no-sandbox (alias)
+codex --model qwen3.5-9b --provider local  # Codex with local model
 
-# Start server manually
-~/Documents/llm/engine/llama.cpp/build/bin/llama-server \
-  -m ~/Documents/llm/models/<model>.gguf \
-  -ngl 99 --no-mmap --jinja --reasoning off \
-  --cache-type-k q8_0 --cache-type-v q8_0 \
-  -c 262144 --port 8200
-
-# Check server stats
-grep -a "prompt eval time\|       eval time" /path/to/server.log
-
-# Tokenize a file (server must be running)
-curl -sf http://localhost:8200/tokenize -H "Content-Type: application/json" -d @/tmp/tok-req.json | python3 -c "import sys,json; print(len(json.load(sys.stdin)['tokens']))"
-```
-
-## Models on disk
-
-```
-~/Documents/llm/models/
-├── qwen3.5-0.8b-q4km.gguf         508MB
-├── qwen3.5-0.8b-q8.gguf           775MB
-├── qwen3.5-0.8b-iq2xxs.gguf       323MB
-├── qwen3.5-2b-q4km.gguf           1.2GB
-├── qwen3.5-2b-q8.gguf             1.9GB
-├── qwen3.5-2b-iq2xxs.gguf         680MB
-├── qwen3.5-4b-q4km.gguf           2.6GB
-├── qwen3.5-4b-q2kxl.gguf          1.9GB
-├── qwen3.5-4b-q8.gguf             4.5GB
-├── qwen3.5-9b-q5km.gguf           6.2GB   (old default, replaced by IQ4_NL)
-├── qwen3.5-9b-iq4nl.gguf          5.4GB   ← interactive tier winner
-├── qwen3.5-9b-iq3xxs.gguf         4.0GB
-├── qwen3.5-9b-heretic-i1-iq4nl.gguf 5.0GB ← heretic fine-tune (tie with base)
-├── qwen3.5-27b-iq2m.gguf          9.5GB   (dead end, 35B MoE is better)
-├── qwen3.5-35b-a3b-iq2m.gguf      10.6GB  (old, replaced by IQ4_NL)
-├── qwen3.5-35b-a3b-iq3xxs.gguf    12.2GB
-└── qwen3.5-35b-a3b-iq4nl.gguf     17.8GB  ← workhorse tier winner
+# Dev fork management
+cd ~/Documents/work/ai/local-llm/engine/dev/llama.cpp
+git log --oneline -5                # see what PRs are applied
+# Current: PR #19720 (Responses API) on branch dev-prs
 ```

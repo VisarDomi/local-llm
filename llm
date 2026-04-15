@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LLM_DIR="$(cd "$(dirname "$0")" && pwd)"
+LLM_DIR="$HOME/Documents/work/ai/local-llm"
 MODEL_DIR="$LLM_DIR/models"
-ENGINE_DIR="$LLM_DIR/engine/llama.cpp/build/bin"
 PIDFILE="$LLM_DIR/.llm-server.pid"
 LOGFILE="$LLM_DIR/.llm-server.log"
+STATEFILE="$LLM_DIR/.llm-server.state"
+
+STABLE_ENGINE="$LLM_DIR/engine/stable/llama.cpp/build/bin"
+DEV_ENGINE="$LLM_DIR/engine/dev/llama.cpp/build/bin"
 
 declare -A TIER_MODEL=(
   [workhorse]="qwen3.5-35b-a3b-iq4nl.gguf"
@@ -14,8 +17,8 @@ declare -A TIER_MODEL=(
 )
 
 declare -A TIER_PORT=(
-  [workhorse]="8010"
-  [workhorse-full]="8010"
+  [workhorse]="8100"
+  [workhorse-full]="8100"
   [interactive]="8100"
 )
 
@@ -38,6 +41,15 @@ is_running() {
   local pid
   pid=$(get_pid)
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+get_engine_dir() {
+  local engine="${1:-stable}"
+  if [[ "$engine" == "dev" ]]; then
+    echo "$DEV_ENGINE"
+  else
+    echo "$STABLE_ENGINE"
+  fi
 }
 
 wait_for_health() {
@@ -76,10 +88,12 @@ cmd_status() {
   if is_running; then
     local pid
     pid=$(get_pid)
-    local tier_info
+    local tier_info engine_info
     tier_info=$(head -1 "$LOGFILE" 2>/dev/null || echo "unknown")
+    engine_info=$(cat "$STATEFILE" 2>/dev/null || echo "unknown")
     green "LLM server running (pid $pid)"
     echo "$tier_info"
+    dim "Engine: $engine_info"
     if command -v nvidia-smi &>/dev/null; then
       nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits | \
         awk -F', ' '{printf "VRAM: %s / %s MB\n", $1, $2}'
@@ -95,13 +109,25 @@ cmd_switch() {
 
   if [[ -z "${TIER_MODEL[$tier]+x}" ]]; then
     red "Unknown tier: $tier"
-    echo "Available: planner, interactive, speed"
+    echo "Available: workhorse, workhorse-full, interactive"
     exit 1
   fi
 
+  # Parse --dev flag from remaining args
+  local engine="stable"
+  local extra_flags=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dev) engine="dev"; shift ;;
+      *) extra_flags+=("$1"); shift ;;
+    esac
+  done
+
+  local engine_dir
+  engine_dir=$(get_engine_dir "$engine")
   local model="$MODEL_DIR/${TIER_MODEL[$tier]}"
   local port="${TIER_PORT[$tier]}"
-  local server="$ENGINE_DIR/llama-server"
+  local server="$engine_dir/llama-server"
 
   if [[ ! -f "$model" ]]; then
     red "Model not found: $model"
@@ -111,14 +137,14 @@ cmd_switch() {
 
   if [[ ! -f "$server" ]]; then
     red "llama-server not found: $server"
-    echo "Build llama.cpp first: cd $LLM_DIR/engine/llama.cpp && cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 && cmake --build build --config Release -j\$(nproc)"
+    echo "Build llama.cpp first in engine/$engine/"
     exit 1
   fi
 
   cmd_stop
 
   local default_flags="${TIER_FLAGS[$tier]}"
-  local override_flags="$*"
+  local override_flags="${extra_flags[*]:-}"
   local final_flags="$default_flags"
 
   if [[ -n "$override_flags" ]]; then
@@ -143,11 +169,15 @@ cmd_switch() {
     done
   fi
 
-  echo "# tier=$tier model=$(basename "$model") port=$port $(date -Iseconds)" > "$LOGFILE"
+  # Persist state
+  echo "engine=$engine tier=$tier" > "$STATEFILE"
+
+  echo "# tier=$tier engine=$engine model=$(basename "$model") port=$port $(date -Iseconds)" > "$LOGFILE"
   echo "# flags: $final_flags" >> "$LOGFILE"
 
-  yellow "Starting $tier tier on port $port..."
+  yellow "Starting $tier tier on port $port ($engine engine)..."
   dim "Model: $(basename "$model")"
+  dim "Engine: $engine ($server)"
   dim "Flags: $final_flags"
 
   $server -m "$model" --port "$port" $final_flags >> "$LOGFILE" 2>&1 &
@@ -155,7 +185,7 @@ cmd_switch() {
   echo "$pid" > "$PIDFILE"
 
   if wait_for_health "$port"; then
-    green "Ready on http://localhost:$port/v1"
+    green "Ready on http://localhost:$port/v1 ($engine engine)"
   else
     red "Server failed to start within 60s. Check $LOGFILE"
     exit 1
@@ -165,7 +195,9 @@ cmd_switch() {
 cmd_bench() {
   local model="$1"
   shift
-  local bench="$ENGINE_DIR/llama-bench"
+  local engine_dir
+  engine_dir=$(get_engine_dir "stable")
+  local bench="$engine_dir/llama-bench"
 
   if [[ ! -f "$bench" ]]; then
     red "llama-bench not found. Build llama.cpp first."
@@ -189,7 +221,9 @@ cmd_bench() {
 cmd_bench_parallel() {
   local model="$1"
   shift
-  local bench="$ENGINE_DIR/llama-batched-bench"
+  local engine_dir
+  engine_dir=$(get_engine_dir "stable")
+  local bench="$engine_dir/llama-batched-bench"
 
   if [[ ! -f "$bench" ]]; then
     red "llama-batched-bench not found. Build llama.cpp first."
@@ -221,7 +255,7 @@ case "$cmd" in
     tier="${1:-}"
     shift || true
     if [[ -z "$tier" ]]; then
-      red "Usage: llm switch <planner|interactive|speed> [flags...]"
+      red "Usage: llm switch <tier> [--dev] [flags...]"
       exit 1
     fi
     cmd_switch "$tier" "$@"
@@ -255,24 +289,29 @@ case "$cmd" in
 llm — local LLM tier switcher
 
 Commands:
-  switch <tier> [flags...]   Start a tier (planner, interactive, speed)
-                             Extra flags override tier defaults
-  stop                       Stop the running server
-  status                     Show what's running + VRAM usage
+  switch <tier> [--dev] [flags...]   Start a tier (workhorse, workhorse-full, interactive)
+                                     --dev uses the dev engine (fork with PRs)
+                                     Extra flags override tier defaults
+  stop                               Stop the running server
+  status                             Show what's running + engine + VRAM usage
 
-  bench <model> [flags...]          Single-stream benchmark
-  bench-parallel <model> [flags...] Parallel scaling benchmark (1,2,4,8)
+  bench <model> [flags...]           Single-stream benchmark
+  bench-parallel <model> [flags...]  Parallel scaling benchmark (1,2,4,8)
 
 Tiers:
-  workhorse       21 t/s  35B-A3B IQ4_NL (regex, 180K ctx), port 8010, fast analysis
-  workhorse-full  15 t/s  35B-A3B IQ4_NL (-cmoe, 262K ctx), port 8010, full context
-  interactive     41 t/s  9B IQ4_NL (262K ctx), port 8100, code gen + tool calling
+  workhorse       21 t/s  35B-A3B IQ4_NL (regex, 180K ctx), fast analysis
+  workhorse-full  15 t/s  35B-A3B IQ4_NL (-cmoe, 262K ctx), full context
+  interactive     41 t/s  9B IQ4_NL (262K ctx), code gen + tool calling
+
+Engines:
+  stable (default)  tracks ggml-org/llama.cpp main, auto-rebuilt daily
+  dev (--dev)       VisarDomi/llama.cpp fork, cherry-picked PRs
 
 Examples:
-  llm switch workhorse
-  llm switch interactive -c 65536
-  llm bench qwen3.5-9b-iq4nl.gguf
-  llm bench-parallel qwen3.5-9b-iq4nl.gguf
+  llm switch interactive
+  llm switch interactive --dev
+  llm switch workhorse -c 65536
+  llm status
   llm stop
 HELP
     ;;

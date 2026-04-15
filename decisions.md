@@ -290,9 +290,42 @@ Eval approach: git diffs are NOT ground truth for exact match. They generate rea
 
 ## Directory Structure
 
-- ~/Documents/llm/ — self-contained
+- ~/Documents/work/ai/local-llm/ — self-contained
 - models/ — GGUF files (12 models downloaded, ~80GB total)
-- engine/ — llama.cpp git clone + build (b8736, CUDA 13.0)
+- engine/stable/llama.cpp/ — tracks ggml-org/llama.cpp master, auto-rebuilt daily at 3:30am
+- engine/dev/llama.cpp/ — VisarDomi/llama.cpp fork, cherry-picked PRs (branch: dev-prs)
 - benchmarks/ — test files, run-test.sh, results/, stats/
-- harness/ — Pi, Gastown, OpenCode (not yet set up)
+- harness/ — Pi (set up), Gastown, OpenCode (not yet set up)
 - decisions.md — this file, single source of truth
+
+## Engine Build Commands
+
+```bash
+# Stable — full rebuild (also runs daily via llm-stable-build.timer at 3:30am)
+cmake -S ~/Documents/work/ai/local-llm/engine/stable/llama.cpp \
+      -B ~/Documents/work/ai/local-llm/engine/stable/llama.cpp/build \
+      -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86
+cmake --build ~/Documents/work/ai/local-llm/engine/stable/llama.cpp/build --config Release -j$(nproc)
+
+# Dev — full rebuild
+cmake -S ~/Documents/work/ai/local-llm/engine/dev/llama.cpp \
+      -B ~/Documents/work/ai/local-llm/engine/dev/llama.cpp/build \
+      -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86
+cmake --build ~/Documents/work/ai/local-llm/engine/dev/llama.cpp/build --config Release -j$(nproc)
+
+# Dev — incremental rebuild (after cherry-picking a PR, only recompiles changed files)
+cmake --build ~/Documents/work/ai/local-llm/engine/dev/llama.cpp/build --config Release -j$(nproc)
+
+# Dev — cherry-pick a PR
+cd ~/Documents/work/ai/local-llm/engine/dev/llama.cpp
+git fetch upstream pull/<PR_NUMBER>/head:pr-<PR_NUMBER>
+git checkout dev-prs
+git merge pr-<PR_NUMBER>
+# resolve conflicts if any, then rebuild
+```
+
+## Engine Selection
+
+- `llm switch interactive` — uses stable engine (default)
+- `llm switch interactive --dev` — uses dev engine
+- `llm status` — shows which engine is running

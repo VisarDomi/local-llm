@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-URL="${LLM_URL:-http://localhost:8200/v1/chat/completions}"
-RESULTS_DIR="${LLM_RESULTS:-$HOME/Documents/llm/benchmarks/results}"
+# Auto-detect running server from llm tier ports
+if [[ -n "${LLM_URL:-}" ]]; then
+  URL="$LLM_URL"
+else
+  URL=""
+  for port in 8100; do
+    if curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
+      URL="http://localhost:$port/v1/chat/completions"
+      break
+    fi
+  done
+  if [[ -z "$URL" ]]; then
+    echo "No LLM server found on ports 8100, 8010. Start one with: llm switch <tier>"
+    exit 1
+  fi
+fi
+RESULTS_DIR="${LLM_RESULTS:-$HOME/Documents/work/ai/local-llm/benchmarks/results}"
 mkdir -p "$RESULTS_DIR"
 
 if [ $# -lt 1 ]; then

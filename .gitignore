@@ -1,4 +1,13 @@
 models/*.gguf
-engine/llama.cpp/
+
+# Local llama.cpp build output lives inside nested repos; ignore only generated builds.
+engine/dev/llama.cpp/build/
+engine/stable/llama.cpp/build/
+
+# Local Python tooling environment for GGUF conversion/build helpers.
+engine/venv/
+
+# Runtime state from the local server wrapper.
 .llm-server.pid
 .llm-server.log
+.llm-server.state
