@@ -13,3 +13,28 @@ I first ended up on focusing exclusively on qwen3.5 after going through the late
 After trying the models out so that they don't OOM, i then try how can they handle context, as there the prompt processing speeds start being felt. But because of cache during the usual coding agent usage of the llm, this cost is paid only once at the beginning, after that only the delta gets processed. That was all about input speed.
 
 Output speed is the usual tokens per second the model can generate. Which is affected by context length. The rule of thumb for 260k context is that you get half speed when close to full context as opposed to when empty context. These great speeds are only possible because of the latest features that are implemented in llamacpp, like the attention rotation.
+
+# shared ocr runtime
+
+The PaddleOCR runtime is intentionally shared across repos instead of living only inside this workspace.
+
+- Canonical location: `~/.local/share/ocr/paddleocr-venv`
+- Compatibility symlink kept here: `./.venv-paddleocr -> ~/.local/share/ocr/paddleocr-venv`
+
+Why:
+
+- the benchmark harness in `local-llm` uses it
+- the Gallery Reader server also uses it
+- the GPU runtime is large, so duplicating it per repo is wasteful
+
+If you need to activate it from this repo:
+
+```bash
+source /home/visar/Documents/work/ai/local-llm/.venv-paddleocr/bin/activate
+```
+
+Or directly:
+
+```bash
+source ~/.local/share/ocr/paddleocr-venv/bin/activate
+```
