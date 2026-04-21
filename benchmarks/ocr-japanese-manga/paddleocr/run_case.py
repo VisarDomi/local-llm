@@ -192,106 +192,70 @@ def sort_horizontal_blocks(blocks: list[dict]) -> list[dict]:
     )
 
 
-def overlaps_y(a: dict, b: dict) -> bool:
-    ay1 = a["bbox"]["y"]
-    ay2 = ay1 + a["bbox"]["height"]
-    by1 = b["bbox"]["y"]
-    by2 = by1 + b["bbox"]["height"]
+def vertically_related(a: dict, b: dict) -> bool:
+    if not a.get("bbox") or not b.get("bbox"):
+        return False
+    ab = a["bbox"]
+    bb = b["bbox"]
+    ay1, ay2 = ab["y"], ab["y"] + ab["height"]
+    by1, by2 = bb["y"], bb["y"] + bb["height"]
     overlap = max(0.0, min(ay2, by2) - max(ay1, by1))
-    min_h = max(1.0, min(a["bbox"]["height"], b["bbox"]["height"]))
-    return overlap / min_h >= 0.18
+    min_h = max(1.0, min(ab["height"], bb["height"]))
+    x_gap = abs(ab["x"] - bb["x"])
+    width_ref = max(ab["width"], bb["width"])
+    return overlap / min_h >= 0.45 and x_gap <= width_ref * 1.6
 
 
-def group_vertical_regions(vertical_blocks: list[dict]) -> list[list[dict]]:
-    if not vertical_blocks:
-        return []
-    sorted_blocks = sorted(vertical_blocks, key=lambda block: block["bbox"]["x"], reverse=True)
-    median_width = sorted(block["bbox"]["width"] for block in sorted_blocks)[len(sorted_blocks) // 2]
-    x_gap_threshold = max(22.0, median_width * 1.15)
-
-    regions: list[list[dict]] = []
-    for block in sorted_blocks:
+def cluster_vertical_blocks(blocks: list[dict]) -> list[list[dict]]:
+    verticals = [
+        block for block in blocks
+        if block.get("direction") == "vertical"
+        and block.get("script") in {"japanese", "mixed"}
+        and block.get("bbox")
+    ]
+    clusters: list[list[dict]] = []
+    for block in verticals:
         placed = False
-        for region in regions:
-            if any(
-                abs(block["bbox"]["x"] - other["bbox"]["x"]) <= x_gap_threshold and overlaps_y(block, other)
-                for other in region
-            ):
-                region.append(block)
+        for cluster in clusters:
+            if any(vertically_related(block, existing) for existing in cluster):
+                cluster.append(block)
                 placed = True
                 break
         if not placed:
-            regions.append([block])
-    return regions
+            clusters.append([block])
+    return clusters
 
 
-def sort_vertical_region(region: list[dict]) -> list[dict]:
-    if len(region) <= 1:
-        return region[:]
+def local_vertical_reorder(blocks: list[dict]) -> tuple[list[dict], list[str]]:
+    warnings: list[str] = []
+    cleaned = [block for block in blocks if not is_noise_block(block)]
+    noise = [block for block in blocks if is_noise_block(block)]
 
-    sorted_by_x = sorted(region, key=lambda block: block["bbox"]["x"], reverse=True)
-    median_width = sorted(block["bbox"]["width"] for block in sorted_by_x)[len(sorted_by_x) // 2]
-    same_column_threshold = max(10.0, median_width * 0.45)
+    clusters = cluster_vertical_blocks(cleaned)
+    clustered_ids = {block["id"] for cluster in clusters for block in cluster}
+    non_vertical = [block for block in cleaned if block["id"] not in clustered_ids]
 
-    columns: list[list[dict]] = []
-    for block in sorted_by_x:
-        placed = False
-        for column in columns:
-            anchor_x = sum(item["bbox"]["x"] for item in column) / len(column)
-            if abs(block["bbox"]["x"] - anchor_x) <= same_column_threshold:
-                column.append(block)
-                placed = True
-                break
-        if not placed:
-            columns.append([block])
-
-    ordered: list[dict] = []
-    columns = sorted(
-        columns,
-        key=lambda column: sum(item["bbox"]["x"] for item in column) / len(column),
+    ordered_clusters = sorted(
+        clusters,
+        key=lambda cluster: sum(block["bbox"]["x"] for block in cluster) / len(cluster),
         reverse=True,
     )
-    for column in columns:
-        ordered.extend(sorted(column, key=lambda item: item["bbox"]["y"]))
-    return ordered
+
+    result: list[dict] = []
+    for cluster in ordered_clusters:
+        result.extend(sorted(cluster, key=lambda item: (-item["bbox"]["x"], item["bbox"]["y"])))
+    result.extend(sort_horizontal_blocks(non_vertical))
+
+    original_order = [block["id"] for block in cleaned]
+    if [block["id"] for block in result] != original_order:
+        warnings.append("vertical_order_corrected")
+    for block in noise:
+        warnings.append(f"noise_filtered:{block['text']}")
+    return result, warnings
 
 
 def reorder_vertical_japanese_blocks(blocks: list[dict]) -> tuple[list[dict], list[str]]:
-    warnings: list[str] = []
-    cleaned_blocks: list[dict] = []
-    for block in blocks:
-        if is_noise_block(block):
-            warnings.append(f"noise_filtered:{block['text']}")
-            continue
-        cleaned_blocks.append(block)
-
-    vertical_blocks = [
-        block for block in cleaned_blocks
-        if block.get("direction") == "vertical" and block.get("script") in {"japanese", "mixed"} and block.get("bbox")
-    ]
-    other_blocks = [block for block in cleaned_blocks if block not in vertical_blocks]
-
-    if len(vertical_blocks) < 2:
-        return sort_horizontal_blocks(cleaned_blocks), warnings
-
-    regions = group_vertical_regions(vertical_blocks)
-    regions = sorted(
-        regions,
-        key=lambda region: min(item["bbox"]["y"] for item in region),
-    )
-
-    vertical_sorted: list[dict] = []
-    for region in regions:
-        vertical_sorted.extend(sort_vertical_region(region))
-    horizontal_sorted = sort_horizontal_blocks(other_blocks)
-    combined = vertical_sorted + horizontal_sorted
-
-    original_order = [block["id"] for block in cleaned_blocks]
-    new_order = [block["id"] for block in combined]
-    if original_order != new_order:
-        warnings.append("vertical_order_corrected")
-
-    return combined, warnings
+    return local_vertical_reorder(blocks)
 
 
 def to_json_safe(value: object) -> object:

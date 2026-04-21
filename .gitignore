@@ -14,3 +14,8 @@ engine/venv/
 
 # Local OCR experiment environment.
 .venv-paddleocr/
+
+# Generated OCR benchmark artifacts.
+benchmarks/ocr-japanese-manga/paddleocr/__pycache__/
+benchmarks/ocr-japanese-manga/paddleocr/outputs/*.json
+!benchmarks/ocr-japanese-manga/paddleocr/outputs/*.human.json

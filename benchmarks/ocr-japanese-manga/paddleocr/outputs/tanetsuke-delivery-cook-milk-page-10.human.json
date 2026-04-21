@@ -11,8 +11,8 @@
     "use_doc_unwarping": false,
     "use_textline_orientation": false
   },
-  "elapsed_ms": 4871.8,
-  "joined_text": "だっ大丈夫よ\n別に怒ったりなんてしないから\nで…でも…\nお願いします!\nいえ!\nそういう訳には\nいかないです!\nわ…わかったわ…\nお客様の大切な荷物なので\n破損状況をお客様自身に\n確認してもらわないと…",
+  "elapsed_ms": 4817.85,
+  "joined_text": "だっ大丈夫よ\n別に怒ったりなんてしないから\nいえ!\nそういう訳には\nいかないです!\nお客様の大切な荷物なので\n破損状況をお客様自身に\n確認してもらわないと…\nで…でも…\nお願いします!\nわ…わかったわ…",
   "lines": [
     {
       "id": "block-2",
@@ -72,68 +72,6 @@
         "y": 154.0,
         "width": 43.0,
         "height": 493.0
-      },
-      "direction": "vertical",
-      "script": "japanese"
-    },
-    {
-      "id": "block-5",
-      "text": "で…でも…",
-      "score": 0.989998459815979,
-      "box": [
-        [
-          286,
-          259
-        ],
-        [
-          331,
-          259
-        ],
-        [
-          331,
-          444
-        ],
-        [
-          286,
-          444
-        ]
-      ],
-      "bbox": {
-        "x": 286.0,
-        "y": 259.0,
-        "width": 45.0,
-        "height": 185.0
-      },
-      "direction": "vertical",
-      "script": "japanese"
-    },
-    {
-      "id": "block-6",
-      "text": "お願いします!",
-      "score": 0.9596741795539856,
-      "box": [
-        [
-          169,
-          543
-        ],
-        [
-          223,
-          543
-        ],
-        [
-          223,
-          802
-        ],
-        [
-          169,
-          802
-        ]
-      ],
-      "bbox": {
-        "x": 169.0,
-        "y": 543.0,
-        "width": 54.0,
-        "height": 259.0
       },
       "direction": "vertical",
       "script": "japanese"
@@ -232,37 +170,6 @@
       "script": "japanese"
     },
     {
-      "id": "block-10",
-      "text": "わ…わかったわ…",
-      "score": 0.9802176356315613,
-      "box": [
-        [
-          135,
-          987
-        ],
-        [
-          186,
-          987
-        ],
-        [
-          186,
-          1277
-        ],
-        [
-          135,
-          1277
-        ]
-      ],
-      "bbox": {
-        "x": 135.0,
-        "y": 987.0,
-        "width": 51.0,
-        "height": 290.0
-      },
-      "direction": "vertical",
-      "script": "japanese"
-    },
-    {
       "id": "block-13",
       "text": "お客様の大切な荷物なので",
       "score": 0.9997950196266174,
@@ -354,12 +261,105 @@
       },
       "direction": "vertical",
       "script": "japanese"
+    },
+    {
+      "id": "block-5",
+      "text": "で…でも…",
+      "score": 0.989998459815979,
+      "box": [
+        [
+          286,
+          259
+        ],
+        [
+          331,
+          259
+        ],
+        [
+          331,
+          444
+        ],
+        [
+          286,
+          444
+        ]
+      ],
+      "bbox": {
+        "x": 286.0,
+        "y": 259.0,
+        "width": 45.0,
+        "height": 185.0
+      },
+      "direction": "vertical",
+      "script": "japanese"
+    },
+    {
+      "id": "block-6",
+      "text": "お願いします!",
+      "score": 0.9596741795539856,
+      "box": [
+        [
+          169,
+          543
+        ],
+        [
+          223,
+          543
+        ],
+        [
+          223,
+          802
+        ],
+        [
+          169,
+          802
+        ]
+      ],
+      "bbox": {
+        "x": 169.0,
+        "y": 543.0,
+        "width": 54.0,
+        "height": 259.0
+      },
+      "direction": "vertical",
+      "script": "japanese"
+    },
+    {
+      "id": "block-10",
+      "text": "わ…わかったわ…",
+      "score": 0.9802176356315613,
+      "box": [
+        [
+          135,
+          987
+        ],
+        [
+          186,
+          987
+        ],
+        [
+          186,
+          1277
+        ],
+        [
+          135,
+          1277
+        ]
+      ],
+      "bbox": {
+        "x": 135.0,
+        "y": 987.0,
+        "width": 51.0,
+        "height": 290.0
+      },
+      "direction": "vertical",
+      "script": "japanese"
     }
   ],
   "warnings": [
+    "vertical_order_corrected",
     "noise_filtered:2",
-    "noise_filtered:n",
-    "vertical_order_corrected"
+    "noise_filtered:n"
   ],
   "artifacts": {
     "human": "/home/visar/Documents/work/ai/local-llm/benchmarks/ocr-japanese-manga/paddleocr/outputs/tanetsuke-delivery-cook-milk-page-10.human.json",
