@@ -11,3 +11,6 @@ engine/venv/
 .llm-server.pid
 .llm-server.log
 .llm-server.state
+
+# Local OCR experiment environment.
+.venv-paddleocr/

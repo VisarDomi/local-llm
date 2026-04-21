@@ -1,0 +1,26 @@
+{
+  "id": "tanetsuke-delivery-cook-milk-page-10",
+  "source": {
+    "gallery_id": 2082647,
+    "category": "hitomi",
+    "group": "cook milk",
+    "title_romaji": "Tanetsuke Delivery ~Seiyoku Fuman no Hitozuma Manko ni Seishi o Otodoke~",
+    "title_jpn": "種付けデリバリー ～欲求不満の人妻マンコに精子をお届け～",
+    "page_index_1_based": 10,
+    "original_file": "hitomi_2082647_0010.webp",
+    "original_path": "/home/visar/Pictures/gallery-dl/hitomi/2082647/hitomi_2082647_0010.webp",
+    "benchmark_files": {
+      "original": "source.webp",
+      "normalized": "source.png"
+    }
+  },
+  "benchmark": {
+    "task": "japanese_ocr",
+    "capture_shape": "full_page_seed",
+    "intended_future_shape": "reader_viewport_crop",
+    "notes": [
+      "Seed case for OCR engine comparison against Apple OCR.",
+      "Ground truth and scoring are not defined yet."
+    ]
+  }
+}
