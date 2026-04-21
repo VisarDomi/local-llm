@@ -1,0 +1,26 @@
+{
+  "id": "mizugi-gravure-iinari-bijin-page-215",
+  "source": {
+    "gallery_id": 2619867,
+    "category": "hitomi",
+    "group": "iinari bijin",
+    "title_romaji": "Mizugi Gravure",
+    "title_jpn": null,
+    "page_index_1_based": 215,
+    "original_file": "hitomi_2619867_0215.webp",
+    "original_path": "/home/visar/Pictures/gallery-dl/hitomi/2619867/hitomi_2619867_0215.webp",
+    "benchmark_files": {
+      "original": "source.webp",
+      "normalized": "source.png"
+    }
+  },
+  "benchmark": {
+    "task": "japanese_ocr",
+    "capture_shape": "full_page_seed",
+    "intended_future_shape": "reader_viewport_crop",
+    "notes": [
+      "Handwritten-style stress case with mixed stylized Japanese and regular printed text.",
+      "Used to compare PaddleOCR against Apple OCR on manga-adjacent stylized lettering."
+    ]
+  }
+}

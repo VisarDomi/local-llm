@@ -7,8 +7,8 @@ def sort_horizontal_blocks(blocks: list[dict]) -> list[dict]:
     return sorted(
         blocks,
         key=lambda block: (
-            block.get("bbox", {}).get("y", math.inf),
-            block.get("bbox", {}).get("x", math.inf),
+            (block.get("bbox") or {}).get("y", math.inf),
+            (block.get("bbox") or {}).get("x", math.inf),
         ),
     )
 
