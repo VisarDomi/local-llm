@@ -1,0 +1,180 @@
+{
+  "engine": "paddleocr",
+  "case_id": "gallery-debug-viewport-2026-04-21T12-36-52-675Z-3301439",
+  "image_path": "/home/visar/Documents/work/ai/local-llm/benchmarks/ocr-japanese-manga/cases/gallery-debug-viewport-2026-04-21T12-36-52-675Z-3301439/source.png",
+  "config": {
+    "lang": "japan",
+    "device": "gpu:0",
+    "text_detection_model_name": "PP-OCRv5_server_det",
+    "text_recognition_model_name": "PP-OCRv5_server_rec",
+    "use_doc_orientation_classify": false,
+    "use_doc_unwarping": false,
+    "use_textline_orientation": false
+  },
+  "elapsed_ms": 5092.15,
+  "joined_text": "(え…あ~あ…き)\n(あ~イイ匂い…)\nち\nち\n打",
+  "lines": [
+    {
+      "id": "block-3",
+      "text": "(え…あ~あ…き)",
+      "score": 0.695959210395813,
+      "box": [
+        [
+          933,
+          1459
+        ],
+        [
+          1083,
+          1460
+        ],
+        [
+          1074,
+          2545
+        ],
+        [
+          924,
+          2544
+        ]
+      ],
+      "bbox": {
+        "x": 924.0,
+        "y": 1459.0,
+        "width": 159.0,
+        "height": 1086.0
+      },
+      "direction": "vertical",
+      "script": "japanese"
+    },
+    {
+      "id": "block-4",
+      "text": "(あ~イイ匂い…)",
+      "score": 0.7828701734542847,
+      "box": [
+        [
+          454,
+          1966
+        ],
+        [
+          597,
+          1967
+        ],
+        [
+          590,
+          2646
+        ],
+        [
+          448,
+          2645
+        ]
+      ],
+      "bbox": {
+        "x": 448.0,
+        "y": 1966.0,
+        "width": 149.0,
+        "height": 680.0
+      },
+      "direction": "vertical",
+      "script": "japanese"
+    },
+    {
+      "id": "block-1",
+      "text": "ち",
+      "score": 0.28884434700012207,
+      "box": [
+        [
+          190,
+          391
+        ],
+        [
+          311,
+          362
+        ],
+        [
+          383,
+          662
+        ],
+        [
+          263,
+          690
+        ]
+      ],
+      "bbox": {
+        "x": 190.0,
+        "y": 362.0,
+        "width": 193.0,
+        "height": 328.0
+      },
+      "direction": "unknown",
+      "script": "japanese"
+    },
+    {
+      "id": "block-2",
+      "text": "ち",
+      "score": 0.7894001603126526,
+      "box": [
+        [
+          329,
+          421
+        ],
+        [
+          447,
+          401
+        ],
+        [
+          494,
+          689
+        ],
+        [
+          376,
+          709
+        ]
+      ],
+      "bbox": {
+        "x": 329.0,
+        "y": 401.0,
+        "width": 165.0,
+        "height": 308.0
+      },
+      "direction": "unknown",
+      "script": "japanese"
+    },
+    {
+      "id": "block-5",
+      "text": "打",
+      "score": 0.22869473695755005,
+      "box": [
+        [
+          12,
+          2488
+        ],
+        [
+          132,
+          2506
+        ],
+        [
+          104,
+          2693
+        ],
+        [
+          0,
+          2675
+        ]
+      ],
+      "bbox": {
+        "x": 0.0,
+        "y": 2488.0,
+        "width": 132.0,
+        "height": 205.0
+      },
+      "direction": "unknown",
+      "script": "japanese"
+    }
+  ],
+  "warnings": [
+    "vertical_order_corrected"
+  ],
+  "artifacts": {
+    "human": "/home/visar/Documents/work/ai/local-llm/benchmarks/ocr-japanese-manga/paddleocr/outputs/gallery-debug-viewport-2026-04-21T12-36-52-675Z-3301439.human.json",
+    "raw": "/home/visar/Documents/work/ai/local-llm/benchmarks/ocr-japanese-manga/paddleocr/outputs/gallery-debug-viewport-2026-04-21T12-36-52-675Z-3301439.raw.json"
+  }
+}
