@@ -6,7 +6,10 @@ MODEL_DIR="$LLM_DIR/models"
 PIDFILE="$LLM_DIR/.llm-server.pid"
 LOGFILE="$LLM_DIR/.llm-server.log"
 STATEFILE="$LLM_DIR/.llm-server.state"
-UNIT="local-llm-server.service"
+UNIT_NAME="qwen36-q6-maxctx"
+UNIT="$UNIT_NAME.service"
+OLD_UNIT="local-llm-server.service"
+OLD_SCOPE="$UNIT_NAME.scope"
 
 STABLE_ENGINE="$LLM_DIR/engine/stable/llama.cpp/build/bin"
 DEV_ENGINE="$LLM_DIR/engine/dev/llama.cpp/build/bin"
@@ -20,7 +23,7 @@ declare -A TIER_PORT=(
 )
 
 declare -A TIER_FLAGS=(
-  [default]="-ngl 99 -ot blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU --no-mmap -np 1 --cache-ram 1024 --checkpoint-every-n-tokens 65536 --no-cache-idle-slots -c 262144 --jinja --reasoning off"
+  [default]="-ngl 99 -ot blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU --no-mmap -np 1 --cache-ram 1024 --checkpoint-every-n-tokens 65536 --ctx-checkpoints 32 --no-cache-idle-slots -c 262144 --jinja --reasoning off"
 )
 
 # TODO: add an interactive "fast but dumb" tier once there is a model worth
@@ -111,8 +114,10 @@ wait_for_ready() {
 cmd_stop() {
   # Clean up old manual tuning scopes too, so `llm stop` unloads anything this
   # repo started during the Qwen3.6 experiments.
-  systemctl --user kill --kill-whom=all --signal=KILL qwen36-q6-maxctx.scope 2>/dev/null || true
-  systemctl --user reset-failed qwen36-q6-maxctx.scope 2>/dev/null || true
+  systemctl --user kill --kill-whom=all --signal=KILL "$OLD_SCOPE" 2>/dev/null || true
+  systemctl --user reset-failed "$OLD_SCOPE" 2>/dev/null || true
+  systemctl --user stop "$OLD_UNIT" 2>/dev/null || true
+  systemctl --user reset-failed "$OLD_UNIT" 2>/dev/null || true
 
   if systemctl --user --quiet is-active "$UNIT" 2>/dev/null; then
     systemctl --user stop "$UNIT" 2>/dev/null || true
@@ -248,6 +253,7 @@ cmd_start() {
   dim "Flags: $final_flags"
 
   systemd-run --user \
+    --expand-environment=no \
     --unit="$UNIT" \
     --collect \
     -p KillSignal=SIGKILL \
@@ -258,7 +264,9 @@ cmd_start() {
     -p MemorySwapMax=0 \
     -p StandardOutput=append:"$LOGFILE" \
     -p StandardError=append:"$LOGFILE" \
-    "$server" -m "$model" --port "$port" $final_flags >> "$LOGFILE" 2>&1
+    timeout 60m \
+    bash -lc 'source "$HOME/.config/cuda-env.sh" 2>/dev/null || true; ulimit -c 0; exec "$@"' bash \
+    "$server" -m "$model" --port "$port" --host 127.0.0.1 $final_flags
 
   local pid waited=0
   pid=$(get_pid)
