@@ -150,14 +150,22 @@ Agent-coding f16 KV checkpoint:
 Full-context Qwen3.6 Q6 workhorse winner:
 
 - `CTX=262144`
-- `CACHE_RAM=512`
-- `CHECKPOINT_EVERY=32768`
-- `MemoryHigh=29696M`
-- `MemoryMax=31744M`
+- `CACHE_RAM=2048`
+- `CHECKPOINT_EVERY=16384`
+- `CTX_CHECKPOINTS=64`
+- `MemoryHigh=28672M`
+- `MemoryMax=30720M`
 - `MemorySwapMax=0`
 - `-np 1`
 - `--no-mmap`
 - default f16 KV
+- Live memory reading during the validated run:
+  - System RAM: about `30GiB / 31GiB` used, `918MiB` available.
+  - System swap: about `2.0GiB / 31GiB` used, but the llama scope had `MemorySwapCurrent=0` because `MemorySwapMax=0`.
+  - Scope memory: `MemoryCurrent=29,897,916,416` bytes (`27.8GiB`), `MemoryPeak=30,040,580,096` bytes (`28.0GiB`), `MemoryAvailable=166,854,656` bytes (`159MiB`) before cgroup max.
+  - Scope guard: `MemoryHigh=30,064,771,072` bytes (`28.0GiB`), `MemoryMax=32,212,254,720` bytes (`30.0GiB`).
+  - VRAM: `11119MiB / 12288MiB` used, `790MiB` free, GPU utilization about `36%` after the run.
+  - `vmstat` showed small swap-in (`96 KiB/s`) and no sampled swap-out, so the validated run was not actively thrashing at the sample point.
 - 3 GPU expert split:
   - GPU experts: `0,10,20`
   - CPU experts: `1-9,11-19,21-39`
@@ -166,17 +174,27 @@ Full-context Qwen3.6 Q6 workhorse winner:
   - Prompt tokens processed: 240,551
   - Completion tokens: 1,024
   - Truncated: 0
-  - Prompt eval: 1,342,614.43ms, 179.17 tokens/s
-  - Generation eval: 64,785.84ms, 15.81 tokens/s
-  - Total time: 1,407,400.27ms for 241,575 tokens
+  - Prompt eval: 1,339,566.37ms, 179.57 tokens/s
+  - Generation eval: 64,808.75ms, 15.80 tokens/s
+  - Total time: 1,404,375.12ms for 241,575 tokens
+  - API result file: `benchmarks/results/20260516-001410-qwen3.6-q6-262144-241k.json`
+  - Checkpoint progression reached `16/64` by the 241K prompt: regular checkpoints through coarse 16K spacing, then near-end tail checkpoints at 240,035 and 240,547 tokens.
 - Follow-up cache probe:
   - Slot selected by LCP similarity with `sim_best = 1.000`, `f_keep = 0.996`.
   - Restored checkpoint at 240,035 tokens.
   - Reprocessed only 548 prompt tokens.
-  - Prompt eval: 4,602.80ms, 119.06 tokens/s
-  - Generation eval: 32,018.14ms for 512 tokens, 15.99 tokens/s
-  - Total follow-up time: 36,620.94ms for 1,060 tokens
-- Interpretation: this is the current full-context workhorse. It preserves f16 KV quality, reaches model max context, keeps llama swap disabled, and has usable same-prefix follow-up caching. The cost is lower cache density (`CHECKPOINT_EVERY=32768`) and fewer GPU experts, so follow-up cache misses can reprocess a larger tail and generation is slower than the 130K quality mode.
+  - Prompt eval: 4,626.63ms, 118.44 tokens/s
+  - Generation eval: 32,380.50ms for 512 tokens, 15.81 tokens/s
+  - Total follow-up time: 37,007.13ms for 1,060 tokens
+  - API reported `cached_tokens = 240,035`.
+  - API result file: `benchmarks/results/20260516-001452-qwen3.6-q6-262144-241k-followup.json`
+- Prompt-cache interpretation:
+  - This is the current full-context workhorse. It preserves f16 KV quality, reaches model max context, keeps llama swap disabled, and has strong same-prefix follow-up caching.
+  - `CACHE_RAM=2048` with `CHECKPOINT_EVERY=16384` and `CTX_CHECKPOINTS=64` produced 16 checkpoints for the 241K prompt. This halves regular checkpoint creation versus `2048/8192/32` while preserving the near-tail cache hit.
+  - Do not model follow-up cost from regular spacing alone. llama.cpp also creates near-end checkpoints when checkpoint slots are available. In the 241K run, it restored from 240,035 tokens and reprocessed only 548 prompt tokens.
+  - `CHECKPOINT_EVERY` is mainly the regular interval floor; near prompt end, llama.cpp deliberately creates tail checkpoints for better follow-up reuse.
+  - Increasing `CTX_CHECKPOINTS` doubles the possible active-slot checkpoint storage only if `CACHE_RAM` is also raised. With the observed 62.813MiB checkpoint size, 64 checkpoints would need about 4020MiB for full coverage at 4096-token spacing.
+  - Generation is slower than the 130K quality mode because only three expert layers remain on GPU, but cache behavior for sequential same-prefix follow-ups is good.
 
 130K server + 120K benchmark:
 

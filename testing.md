@@ -10,13 +10,14 @@ Current baseline:
 - server: `engine/stable/llama.cpp/build/bin/llama-server`
 - placement: `-ngl 99` plus regex CPU expert override
 - parallelism: disabled with `-np 1`
-- prompt cache: full-context default is `--cache-ram 512`
-- checkpoint spacing: full-context default is `--checkpoint-every-n-tokens 32768`
+- prompt cache: full-context default is `--cache-ram 2048`
+- checkpoint spacing: full-context default is `--checkpoint-every-n-tokens 16384`
+- context checkpoints: full-context default is `--ctx-checkpoints 64`
 - mmap: disabled with `--no-mmap`
 - KV: default f16 for quality. Add Q8 KV only for long-context mode.
-- memory guard: full-context default is `MemoryHigh=29696M`, `MemoryMax=31744M`, `MemorySwapMax=0`
+- memory guard: full-context default is `MemoryHigh=28672M`, `MemoryMax=30720M`, `MemorySwapMax=0`
 
-The older exploratory guard `MemoryHigh=30720M`, `MemoryMax=32768M` allowed the desktop to run out of breathing room during a full-context run. The safer `28672M/30720M` guard was too tight for full context. Use `29696M/31744M` for the current workhorse.
+The older exploratory guard `MemoryHigh=30720M`, `MemoryMax=32768M` allowed the desktop to run out of breathing room during a full-context run. The aggressive `31232M/32256M` guard fit the `2048/8192/32` test but made the desktop feel heavy. The current test direction lowers the guard back to `28672M/30720M` and reduces regular checkpoint pressure. Keep swap enabled at the OS level, but keep llama's cgroup swap disabled with `MemorySwapMax=0`.
 
 ## Cleanup
 
@@ -46,8 +47,9 @@ free -h
 Fixed:
 
 ```text
-CACHE_RAM=1024
-CHECKPOINT_EVERY=16384
+CACHE_RAM=2048
+CHECKPOINT_EVERY=8192
+CTX_CHECKPOINTS=32
 ```
 
 Known-good:
@@ -56,16 +58,19 @@ Known-good:
 CTX=131072
 CACHE_RAM=1024
 CHECKPOINT_EVERY=16384
+CTX_CHECKPOINTS=32
 OT_REGEX="blk\.([3-9]|1[3-9]|2[2-9]|3[0-9])\.ffn_.*_exps\.weight=CPU"
 
 CTX=163840
 CACHE_RAM=1024
 CHECKPOINT_EVERY=16384
+CTX_CHECKPOINTS=32
 OT_REGEX="blk\.([2-9]|1[3-9]|2[2-9]|3[0-9])\.ffn_.*_exps\.weight=CPU"
 
 CTX=262144
-CACHE_RAM=512
-CHECKPOINT_EVERY=32768
+CACHE_RAM=2048
+CHECKPOINT_EVERY=8192
+CTX_CHECKPOINTS=32
 OT_REGEX="blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU"
 ```
 
@@ -123,9 +128,69 @@ OT_REGEX="blk\.([0-9]|[1-3][0-9])\.ffn_.*_exps\.weight=CPU"
 
 Confirmed: 7 GPU experts loads with `CTX=163840`.
 
-Confirmed winner: 3 GPU experts loads full context with `CTX=262144`, `CACHE_RAM=512`, `CHECKPOINT_EVERY=32768`, and `MemoryHigh=29696M` / `MemoryMax=31744M`.
+Confirmed winner: 3 GPU experts loads full context with `CTX=262144`, `CACHE_RAM=2048`, `CHECKPOINT_EVERY=16384`, `CTX_CHECKPOINTS=64`, and `MemoryHigh=28672M` / `MemoryMax=30720M`. This preserved the near-tail cache hit while reducing regular checkpoint creation versus `2048/8192/32`.
 
 Suggested order for higher contexts: try the next context with 7 GPU experts first, then 6, then 5.
+
+Checkpoint note: regular coverage math is only the floor. llama.cpp also creates near-end checkpoints when slots are available, so same-prefix follow-ups near the end of a long prompt can reprocess only a small tail. Example: the 241K full-context run restored from 240,035 tokens and reprocessed 548 prompt tokens, not half of `CHECKPOINT_EVERY`.
+
+Source-of-truth defaults in this llama.cpp build are `--cache-ram 8192`, `--checkpoint-every-n-tokens 8192`, and `--ctx-checkpoints 32`. For this single-slot 262K setup, `2048/8192/32` is the practical cache shape: 32 checkpoints * 8192 tokens covers 262,144 tokens, and 32 checkpoints * 62.813MiB is about 2010MiB. Raising `--ctx-checkpoints` above 32 only helps if `CACHE_RAM` is raised enough to hold the extra checkpoints.
+
+## Cache/Checkpoint Test Matrix
+
+Use the safer memory guard for these:
+
+```text
+MemoryHigh=28672M
+MemoryMax=30720M
+MemorySwapMax=0
+```
+
+The first line in each pair is the requested cache size. The second line doubles `CHECKPOINT_EVERY` to reduce regular checkpoint creation and memory pressure while keeping extra checkpoint slots available for tail checkpoints.
+
+```text
+# A: practical sequential-agent candidate
+CACHE_RAM=2048
+CHECKPOINT_EVERY=16384
+CTX_CHECKPOINTS=64
+
+# A2: lighter regular checkpoint pressure
+CACHE_RAM=2048
+CHECKPOINT_EVERY=32768
+CTX_CHECKPOINTS=64
+
+# B: high cache, default spacing, more checkpoint slots
+CACHE_RAM=4096
+CHECKPOINT_EVERY=8192
+CTX_CHECKPOINTS=64
+
+# B2: lower regular checkpoint pressure
+CACHE_RAM=4096
+CHECKPOINT_EVERY=16384
+CTX_CHECKPOINTS=64
+
+# C: high cache, coarser spacing, many checkpoint slots
+CACHE_RAM=4096
+CHECKPOINT_EVERY=16384
+CTX_CHECKPOINTS=128
+
+# C2: lower regular checkpoint pressure
+CACHE_RAM=4096
+CHECKPOINT_EVERY=32768
+CTX_CHECKPOINTS=128
+
+# D: default cache-ram budget, coarse spacing
+CACHE_RAM=8192
+CHECKPOINT_EVERY=32768
+CTX_CHECKPOINTS=128
+
+# D2: lower regular checkpoint pressure
+CACHE_RAM=8192
+CHECKPOINT_EVERY=65536
+CTX_CHECKPOINTS=128
+```
+
+Expected feel: A should be smoother than `2048/8192/32` because it halves regular checkpoint creation while leaving tail slots. A2 should be smoother still, but mid-context restore granularity is worse. B/C/D give llama permission to hold much more prompt-cache RAM; they may still feel heavy even if regular checkpoint spacing is coarser.
 
 ## Start Server
 
@@ -136,7 +201,8 @@ systemctl --user kill --kill-whom=all --signal=KILL qwen36-q6-maxctx.scope
 
 CTX=262144
 CACHE_RAM=1024
-CHECKPOINT_EVERY=16384
+CHECKPOINT_EVERY=32768
+CTX_CHECKPOINTS=16
 OT_REGEX="blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU"
 systemd-run --user --scope \
   --expand-environment=no \
@@ -144,8 +210,8 @@ systemd-run --user --scope \
   -p KillSignal=SIGKILL \
   -p SendSIGKILL=yes \
   -p TimeoutStopSec=2s \
-  -p MemoryMax=32256M \
-  -p MemoryHigh=31232M \
+  -p MemoryMax=30720M \
+  -p MemoryHigh=28672M \
   -p MemorySwapMax=0 \
   timeout 60m \
   bash -lc 'ulimit -c 0; exec "$@"' bash \
@@ -159,6 +225,7 @@ systemd-run --user --scope \
     -np 1 \
     --cache-ram "$CACHE_RAM" \
     --checkpoint-every-n-tokens "$CHECKPOINT_EVERY" \
+    --ctx-checkpoints "$CTX_CHECKPOINTS" \
     --no-cache-idle-slots \
     -c "$CTX" \
     --jinja \
