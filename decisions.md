@@ -1,5 +1,250 @@
 # Decisions
 
+## 2026-05-15: Qwen3.6 35B Q6/Q8 on RTX 3060 12GB + 32GB RAM
+
+Hardware for this pass:
+
+- GPU: RTX 3060 12GB
+- RAM: 32GB
+- CPU: 6 physical cores
+- Runtime: llama.cpp stable build with CUDA 13.1 env from `~/.config/cuda-env.sh`
+- Goal: run Qwen3.6 35B MoE with no mmap/NVMe paging when possible.
+
+### CUDA and Runtime
+
+- CUDA 13.1.2 is the intended toolkit for the local llama.cpp path.
+- The stable llama.cpp binary is built from the local stable engine under `engine/stable/llama.cpp`.
+- Use `source ~/.config/cuda-env.sh` before manual tests.
+
+### Placement Strategy
+
+The useful strategy is explicit tensor placement, not code changes:
+
+- Keep `-ngl 99` so non-overridden tensors are aggressively eligible for GPU.
+- Use `-ot ...=CPU` to move selected MoE expert tensors back to CPU.
+- Use `--no-mmap` when testing whether the model fits in RAM+VRAM without NVMe-backed mmap behavior.
+- Use Q8 KV with `--cache-type-k q8_0 --cache-type-v q8_0`.
+
+Current Q6 working split:
+
+```bash
+-ot "blk\.([3-9]|1[3-9]|2[2-9]|3[0-9])\.ffn_.*_exps\.weight=CPU"
+```
+
+Meaning:
+
+- GPU experts: layers `0,1,2,10,11,12,20,21`
+- CPU experts: layers `3-9,13-19,22-39`
+
+If higher context fails with CUDA OOM, the next lower-VRAM split is:
+
+```bash
+-ot "blk\.([2-9]|1[2-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU"
+```
+
+Meaning:
+
+- GPU experts: layers `0,1,10,11,20`
+- CPU experts: layers `2-9,12-19,21-39`
+
+### Q8 Result
+
+`Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf`:
+
+- mmap + regex could load and answer at 262K.
+- `--no-mmap` could not be made practical on 32GB RAM + 12GB VRAM.
+- Around 8 GPU expert layers it was still RAM-bound.
+- Around 10 GPU expert layers it became VRAM-bound and failed on an additional CUDA compute buffer.
+- Conclusion: Q8 no-mmap is not viable on this machine.
+
+Observed Q8 boundaries:
+
+- 3 GPU expert layers: RAM-bound before load.
+- 5 GPU expert layers: still RAM-bound, about 8.3GB VRAM used.
+- 8 GPU expert layers: about 26.6GB cgroup memory, 27.9GB RSS, 9.9GB VRAM, still not loaded.
+- 10 GPU expert layers: about 25.5GB cgroup memory, 26.6GB RSS, 11.6GB VRAM, then CUDA OOM on about 568MiB compute buffer.
+- 12 GPU expert layers: immediate CUDA OOM, attempted about 12.6GiB CUDA allocation.
+
+### Q6 Working Checkpoints
+
+`Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf` is the current viable candidate.
+
+4K smoke test:
+
+- `--no-mmap`
+- `-ngl 99`
+- current 8 GPU expert split
+- `-c 4096`
+- Q8 KV
+- Answered `2+2 equals 4.`
+- Prompt: 48.4 t/s
+- Generation: 24.0 t/s
+- Cgroup memory: about 25.9GB
+- Process RSS: about 23.8GB
+- VRAM: about 9.0GB used
+- Global available RAM: about 5.9GB
+
+40K server + 35K benchmark:
+
+- Result file: `benchmarks/results/20260515-133923-qwen3.6-35b-q6-40k-nommap-35k.json`
+- Prompt tokens: 35,345
+- Completion tokens: 1,024
+- Finish reason: `length`
+- Wall time: 202,022ms
+- Approx throughput from wall: 180 tokens/s across prompt plus completion
+- Server loaded in about 60 seconds.
+- Before benchmark: cgroup memory about 26.4GB, VRAM about 9.4GB, global available RAM about 5.8GB.
+- During benchmark: resource use stayed stable around 9.4GB VRAM and 5.4GB available RAM.
+
+40K server + 35K benchmark with default f16 KV:
+
+- Command omitted explicit `--cache-type-k q8_0 --cache-type-v q8_0`, so llama.cpp used default f16 KV.
+- Context: `-c 40000`, rounded to `n_ctx = 40192`.
+- Prompt tokens: 35,345
+- Completion tokens: 1,024
+- Truncated: 0
+- Prompt eval: 150,524.83ms, 234.81 tokens/s
+- Generation eval: 46,296.95ms, 22.12 tokens/s
+- Total time: 196,821.78ms for 36,369 tokens
+- Interpretation: f16 KV preserved the same prompt-processing speed as Q8 KV at 35K and slightly improved generation speed, but it is expected to reduce the max context ceiling because it uses more VRAM.
+- `--cache-ram 4096` did not load in this tight f16-KV shape, but `--cache-ram 512` loaded at 40K context.
+- Interpretation: prompt cache is viable, but cache size must be tuned against RAM pressure. For 35K follow-ups, 512MiB should cover the observed checkpoint footprint because checkpoints were about 62.813MiB each and the 35K run created about 6 checkpoints.
+
+Agent-coding f16 KV checkpoint:
+
+- `CTX=131072`
+- `CACHE_RAM=1024`
+- `CHECKPOINT_EVERY=16384`
+- `-np 1`
+- `--no-mmap`
+- default f16 KV
+- current 8 GPU expert split
+- This combination loads and gives useful cache hits at 120K prompt size.
+- Resource usage during the run: about 11,776MiB / 12,288MiB VRAM and about 28.3GB RAM / 84.4%.
+- Base 120K run:
+  - Prompt tokens processed: 119,767
+  - Completion tokens: 1,024
+  - Truncated: 0
+  - Prompt eval: 552,143.42ms, 216.91 tokens/s
+  - Generation eval: 51,056.51ms, 20.06 tokens/s
+  - Total time: 603,199.92ms for 120,791 tokens
+- Checkpoint behavior:
+  - Checkpoints every 16,384 tokens.
+  - Checkpoint size remained about 62.813MiB.
+  - The base run created checkpoints through the end of the 120K prompt.
+- Same-prefix follow-up:
+  - Slot selected by LCP similarity with `sim_best = 1.000`, `f_keep = 0.991`.
+  - Restored checkpoint at 119,251 tokens.
+  - Reprocessed only 548 prompt tokens.
+  - Prompt eval: 3,683.49ms, 148.77 tokens/s
+  - Generation eval: 25,461.90ms for 512 tokens, 20.11 tokens/s
+  - Total follow-up time: 29,145.39ms for 1,060 tokens
+- Interpretation: this is the current best agent-coding mode: f16 KV quality, 130K context, 1024MiB cache, one slot, no mmap, and fast follow-ups.
+- Next pressure point is increasing context above 130K or preserving this cache behavior at higher context. Larger cache attempts can stall during `common_init_result: fitting params to device memory ...`.
+- The 7 GPU expert regex loads with `CTX=163840`:
+  - GPU experts: `0,1,10,11,12,20,21`
+  - CPU experts: `2-9,13-19,22-39`
+  - Regex: `blk\.([2-9]|1[3-9]|2[2-9]|3[0-9])\.ffn_.*_exps\.weight=CPU`
+  - This is the next confirmed context step above the 8 GPU expert `CTX=131072` quality mode.
+
+Full-context Qwen3.6 Q6 workhorse winner:
+
+- `CTX=262144`
+- `CACHE_RAM=512`
+- `CHECKPOINT_EVERY=32768`
+- `MemoryHigh=29696M`
+- `MemoryMax=31744M`
+- `MemorySwapMax=0`
+- `-np 1`
+- `--no-mmap`
+- default f16 KV
+- 3 GPU expert split:
+  - GPU experts: `0,10,20`
+  - CPU experts: `1-9,11-19,21-39`
+  - Regex: `blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU`
+- 241K benchmark:
+  - Prompt tokens processed: 240,551
+  - Completion tokens: 1,024
+  - Truncated: 0
+  - Prompt eval: 1,342,614.43ms, 179.17 tokens/s
+  - Generation eval: 64,785.84ms, 15.81 tokens/s
+  - Total time: 1,407,400.27ms for 241,575 tokens
+- Follow-up cache probe:
+  - Slot selected by LCP similarity with `sim_best = 1.000`, `f_keep = 0.996`.
+  - Restored checkpoint at 240,035 tokens.
+  - Reprocessed only 548 prompt tokens.
+  - Prompt eval: 4,602.80ms, 119.06 tokens/s
+  - Generation eval: 32,018.14ms for 512 tokens, 15.99 tokens/s
+  - Total follow-up time: 36,620.94ms for 1,060 tokens
+- Interpretation: this is the current full-context workhorse. It preserves f16 KV quality, reaches model max context, keeps llama swap disabled, and has usable same-prefix follow-up caching. The cost is lower cache density (`CHECKPOINT_EVERY=32768`) and fewer GPU experts, so follow-up cache misses can reprocess a larger tail and generation is slower than the 130K quality mode.
+
+130K server + 120K benchmark:
+
+- Prompt tokens processed: 119,767
+- Completion tokens: 1,024
+- Truncated: 0
+- Prompt eval: 551,801.48ms, 217.05 tokens/s
+- Generation eval: 61,130.88ms, 16.75 tokens/s
+- Total time: 612,932.36ms for 120,791 tokens
+- Live VRAM after load/test: about 10,775MiB / 12,288MiB
+- Live RAM after load/test: about 28.7GB / 33.6GB
+- Resource numbers stayed stable after the benchmark completed.
+- Context checkpoints were created during prompt processing.
+- Example checkpoint log entries around 114,688 and 119,763 tokens were about 62.813MiB each.
+
+This is the strongest confirmed no-mmap checkpoint so far.
+
+### 262K Failure
+
+The 262K attempt used the current Q6 split:
+
+```bash
+-ngl 99
+-ot "blk\.([3-9]|1[3-9]|2[2-9]|3[0-9])\.ffn_.*_exps\.weight=CPU"
+-c 262144
+```
+
+It failed during context creation:
+
+```text
+failed to fit params to free device memory: n_gpu_layers already set by user to 99, abort
+allocating 812.28 MiB on device 0: cudaMalloc failed: out of memory
+failed to allocate compute pp buffers
+```
+
+Interpretation:
+
+- The 8-expert split plus `-ngl 99` works at 130K.
+- At 262K, larger KV/compute needs require more VRAM headroom.
+- llama.cpp detected this during fit, but could not reduce GPU placement because `-ngl 99` was explicitly set.
+- Do not remove `-ngl 99` as the default next move; that changes the placement strategy too much.
+- The next controlled move is to increase context in steps, then reduce GPU expert layers if a step fails.
+
+### Prompt Cache and Parallel Forking
+
+Sequential same-prefix cache behavior is good:
+
+- Cold 35K base: 35,345 prompt tokens, 1,024 completion tokens, wall 200,150ms.
+- Follow-up state: 35,378 prompt tokens, 256 completion tokens, wall 15,453ms.
+- Follow-up errors: 35,375 prompt tokens, 256 completion tokens, wall 15,791ms.
+- Logs showed LCP similarity, checkpoint restore around 34,829 tokens, and only about 546-549 prompt tokens reprocessed.
+
+Parallel same-prefix forking is not currently good:
+
+- With `-np 2 -c 81920 --cache-ram 4096`, one request reused the hot slot, while the other landed on an empty slot and cold-processed the full 35K prompt.
+- `--cache-idle-slots` requires `--kv-unified`; without unified KV it was disabled.
+- Even with the unified-KV test direction, logs still showed the second slot cold-prefilling rather than cloning the active hot slot.
+- Conclusion: normal llama-server caching is useful for sequential follow-ups, but it does not provide cheap active conversation forking into multiple concurrent slots.
+- Related online discussion confirms this is a known gap; true fanout likely needs a llama.cpp patch/API that clones one processed prefix into multiple slots with different suffixes.
+
+### Operational Notes
+
+- Use named `systemd-run --user --scope` scopes for cleanup.
+- Ctrl+C can detach from the `systemd-run` client while the scope continues.
+- Stop scopes with `systemctl --user kill --kill-whom=all --signal=KILL <scope>.scope`.
+- The shell wrapper `bash -lc 'ulimit -c 0; exec "$@"' bash ...` reduces normal core dumping, but does not fully prevent `systemd-coredump` from appearing after some hard crashes.
+- If a root-owned `systemd-coredump` worker remains and consumes memory, kill it manually with sudo.
+
 ## Hardware
 
 - RTX 3060 12GB VRAM (360 GB/s bandwidth), Xeon E5-1650v3 6C/12T (Haswell 2014, no AVX-512), 32GB DDR4 2133MHz (~34 GB/s)

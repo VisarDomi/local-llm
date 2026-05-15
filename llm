@@ -13,19 +13,16 @@ DEV_ENGINE="$LLM_DIR/engine/dev/llama.cpp/build/bin"
 declare -A TIER_MODEL=(
   [workhorse]="qwen3.5-35b-a3b-iq4nl.gguf"
   [workhorse-full]="qwen3.5-35b-a3b-iq4nl.gguf"
-  [interactive]="qwen3.5-9b-iq4nl.gguf"
 )
 
 declare -A TIER_PORT=(
   [workhorse]="8100"
   [workhorse-full]="8100"
-  [interactive]="8100"
 )
 
 declare -A TIER_FLAGS=(
   [workhorse]="-ngl 99 -ot blk\.([0-2][0-9]|3[0-5])\.ffn_.*_exps\.weight=CPU --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 180000"
   [workhorse-full]="-ngl 99 -cmoe --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 262144"
-  [interactive]="-ngl 99 --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 262144"
 )
 
 red()    { printf '\033[0;31m%s\033[0m\n' "$*"; }
@@ -40,7 +37,21 @@ get_pid() {
 is_running() {
   local pid
   pid=$(get_pid)
-  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+  [[ -n "$pid" ]] && process_running "$pid"
+}
+
+process_running() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+
+  # Treat zombies as stopped. kill -0 stays true for zombies until reaped,
+  # but they no longer hold the port or GPU memory.
+  if [[ -r "/proc/$pid/stat" ]]; then
+    local state
+    state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+    [[ "$state" != "Z" ]]
+  fi
 }
 
 get_engine_dir() {
@@ -52,11 +63,34 @@ get_engine_dir() {
   fi
 }
 
-wait_for_health() {
-  local port="$1" timeout=60 elapsed=0
+wait_for_port_down() {
+  local port="$1" timeout=30 elapsed=0
   while (( elapsed < timeout )); do
-    if curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
+    if ! curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
       return 0
+    fi
+    sleep 1
+    (( elapsed++ ))
+  done
+  return 1
+}
+
+wait_for_ready() {
+  local port="$1" model="$2" pid="$3" timeout=180 elapsed=0
+  while (( elapsed < timeout )); do
+    if ! process_running "$pid"; then
+      return 1
+    fi
+    if curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
+      if command -v jq >/dev/null 2>&1; then
+        if curl -sf "http://localhost:$port/props" | jq -e --arg model "$model" '.model_path == $model and (.total_slots // 0) > 0' >/dev/null 2>&1; then
+          return 0
+        fi
+      else
+        if curl -sf "http://localhost:$port/props" | grep -F "\"model_path\":\"$model\"" >/dev/null 2>&1; then
+          return 0
+        fi
+      fi
     fi
     sleep 1
     (( elapsed++ ))
@@ -68,18 +102,24 @@ cmd_stop() {
   if is_running; then
     local pid
     pid=$(get_pid)
-    kill "$pid" 2>/dev/null
+    kill "$pid" 2>/dev/null || true
     local waited=0
-    while kill -0 "$pid" 2>/dev/null && (( waited < 10 )); do
+    while process_running "$pid" && (( waited < 20 )); do
       sleep 1
       (( waited++ ))
     done
-    if kill -0 "$pid" 2>/dev/null; then
+    if process_running "$pid"; then
       kill -9 "$pid" 2>/dev/null
+      waited=0
+      while process_running "$pid" && (( waited < 5 )); do
+        sleep 1
+        (( waited++ ))
+      done
     fi
     rm -f "$PIDFILE"
     green "Stopped LLM server (pid $pid)"
   else
+    rm -f "$PIDFILE"
     dim "No LLM server running"
   fi
 }
@@ -99,6 +139,7 @@ cmd_status() {
         awk -F', ' '{printf "VRAM: %s / %s MB\n", $1, $2}'
     fi
   else
+    rm -f "$PIDFILE"
     dim "No LLM server running"
   fi
 }
@@ -109,7 +150,7 @@ cmd_switch() {
 
   if [[ -z "${TIER_MODEL[$tier]+x}" ]]; then
     red "Unknown tier: $tier"
-    echo "Available: workhorse, workhorse-full, interactive"
+    echo "Available: workhorse, workhorse-full"
     exit 1
   fi
 
@@ -142,6 +183,10 @@ cmd_switch() {
   fi
 
   cmd_stop
+  if ! wait_for_port_down "$port"; then
+    red "Port $port is still serving after stop; refusing to start a second server"
+    exit 1
+  fi
 
   local default_flags="${TIER_FLAGS[$tier]}"
   local override_flags="${extra_flags[*]:-}"
@@ -180,14 +225,14 @@ cmd_switch() {
   dim "Engine: $engine ($server)"
   dim "Flags: $final_flags"
 
-  $server -m "$model" --port "$port" $final_flags >> "$LOGFILE" 2>&1 &
+  nohup setsid "$server" -m "$model" --port "$port" $final_flags >> "$LOGFILE" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" > "$PIDFILE"
 
-  if wait_for_health "$port"; then
+  if wait_for_ready "$port" "$model" "$pid"; then
     green "Ready on http://localhost:$port/v1 ($engine engine)"
   else
-    red "Server failed to start within 60s. Check $LOGFILE"
+    red "Server failed to become ready with $(basename "$model") within 180s. Check $LOGFILE"
     exit 1
   fi
 }
@@ -301,15 +346,12 @@ Commands:
 Tiers:
   workhorse       21 t/s  35B-A3B IQ4_NL (regex, 180K ctx), fast analysis
   workhorse-full  15 t/s  35B-A3B IQ4_NL (-cmoe, 262K ctx), full context
-  interactive     41 t/s  9B IQ4_NL (262K ctx), code gen + tool calling
 
 Engines:
   stable (default)  tracks ggml-org/llama.cpp main, auto-rebuilt daily
   dev (--dev)       VisarDomi/llama.cpp fork, cherry-picked PRs
 
 Examples:
-  llm switch interactive
-  llm switch interactive --dev
   llm switch workhorse -c 65536
   llm status
   llm stop
