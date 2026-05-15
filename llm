@@ -6,24 +6,26 @@ MODEL_DIR="$LLM_DIR/models"
 PIDFILE="$LLM_DIR/.llm-server.pid"
 LOGFILE="$LLM_DIR/.llm-server.log"
 STATEFILE="$LLM_DIR/.llm-server.state"
+UNIT="local-llm-server.service"
 
 STABLE_ENGINE="$LLM_DIR/engine/stable/llama.cpp/build/bin"
 DEV_ENGINE="$LLM_DIR/engine/dev/llama.cpp/build/bin"
 
 declare -A TIER_MODEL=(
-  [workhorse]="qwen3.5-35b-a3b-iq4nl.gguf"
-  [workhorse-full]="qwen3.5-35b-a3b-iq4nl.gguf"
+  [default]="Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf"
 )
 
 declare -A TIER_PORT=(
-  [workhorse]="8100"
-  [workhorse-full]="8100"
+  [default]="8100"
 )
 
 declare -A TIER_FLAGS=(
-  [workhorse]="-ngl 99 -ot blk\.([0-2][0-9]|3[0-5])\.ffn_.*_exps\.weight=CPU --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 180000"
-  [workhorse-full]="-ngl 99 -cmoe --no-mmap --jinja --reasoning off --cache-type-k q8_0 --cache-type-v q8_0 -c 262144"
+  [default]="-ngl 99 -ot blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU --no-mmap -np 1 --cache-ram 1024 --checkpoint-every-n-tokens 65536 --no-cache-idle-slots -c 262144 --jinja --reasoning off"
 )
+
+# TODO: add an interactive "fast but dumb" tier once there is a model worth
+# keeping operationally. For now the CLI intentionally exposes only the
+# Qwen3.6 Q6 full-context workhorse.
 
 red()    { printf '\033[0;31m%s\033[0m\n' "$*"; }
 green()  { printf '\033[0;32m%s\033[0m\n' "$*"; }
@@ -31,7 +33,15 @@ yellow() { printf '\033[0;33m%s\033[0m\n' "$*"; }
 dim()    { printf '\033[0;90m%s\033[0m\n' "$*"; }
 
 get_pid() {
-  [[ -f "$PIDFILE" ]] && cat "$PIDFILE" || echo ""
+  local main_pid
+  main_pid=$(systemctl --user show "$UNIT" -p MainPID --value 2>/dev/null || true)
+  if [[ -n "$main_pid" && "$main_pid" != "0" ]]; then
+    echo "$main_pid"
+  elif [[ -f "$PIDFILE" ]]; then
+    cat "$PIDFILE"
+  else
+    echo ""
+  fi
 }
 
 is_running() {
@@ -99,7 +109,17 @@ wait_for_ready() {
 }
 
 cmd_stop() {
-  if is_running; then
+  # Clean up old manual tuning scopes too, so `llm stop` unloads anything this
+  # repo started during the Qwen3.6 experiments.
+  systemctl --user kill --kill-whom=all --signal=KILL qwen36-q6-maxctx.scope 2>/dev/null || true
+  systemctl --user reset-failed qwen36-q6-maxctx.scope 2>/dev/null || true
+
+  if systemctl --user --quiet is-active "$UNIT" 2>/dev/null; then
+    systemctl --user stop "$UNIT" 2>/dev/null || true
+    systemctl --user reset-failed "$UNIT" 2>/dev/null || true
+    rm -f "$PIDFILE"
+    green "Stopped LLM server ($UNIT)"
+  elif is_running; then
     local pid
     pid=$(get_pid)
     kill "$pid" 2>/dev/null || true
@@ -134,6 +154,8 @@ cmd_status() {
     green "LLM server running (pid $pid)"
     echo "$tier_info"
     dim "Engine: $engine_info"
+    systemctl --user show "$UNIT" -p MemoryCurrent -p MemoryPeak -p MemoryHigh -p MemoryMax -p MemorySwapCurrent --value 2>/dev/null | \
+      awk 'NR==1{cur=$1} NR==2{peak=$1} NR==3{high=$1} NR==4{max=$1} NR==5{swap=$1} END{if (cur!="") printf "Memory: current=%s peak=%s high=%s max=%s swap=%s bytes\n", cur, peak, high, max, swap}'
     if command -v nvidia-smi &>/dev/null; then
       nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits | \
         awk -F', ' '{printf "VRAM: %s / %s MB\n", $1, $2}'
@@ -144,13 +166,13 @@ cmd_status() {
   fi
 }
 
-cmd_switch() {
+cmd_start() {
   local tier="$1"
   shift
 
   if [[ -z "${TIER_MODEL[$tier]+x}" ]]; then
     red "Unknown tier: $tier"
-    echo "Available: workhorse, workhorse-full"
+    echo "Available: default"
     exit 1
   fi
 
@@ -225,8 +247,26 @@ cmd_switch() {
   dim "Engine: $engine ($server)"
   dim "Flags: $final_flags"
 
-  nohup setsid "$server" -m "$model" --port "$port" $final_flags >> "$LOGFILE" 2>&1 </dev/null &
-  local pid=$!
+  systemd-run --user \
+    --unit="$UNIT" \
+    --collect \
+    -p KillSignal=SIGKILL \
+    -p SendSIGKILL=yes \
+    -p TimeoutStopSec=2s \
+    -p MemoryMax=30720M \
+    -p MemoryHigh=28672M \
+    -p MemorySwapMax=0 \
+    -p StandardOutput=append:"$LOGFILE" \
+    -p StandardError=append:"$LOGFILE" \
+    "$server" -m "$model" --port "$port" $final_flags >> "$LOGFILE" 2>&1
+
+  local pid waited=0
+  pid=$(get_pid)
+  while [[ -z "$pid" || "$pid" == "0" ]] && (( waited < 10 )); do
+    sleep 1
+    pid=$(get_pid)
+    (( waited++ ))
+  done
   echo "$pid" > "$PIDFILE"
 
   if wait_for_ready "$port" "$model" "$pid"; then
@@ -296,14 +336,13 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
-  switch)
-    tier="${1:-}"
-    shift || true
-    if [[ -z "$tier" ]]; then
-      red "Usage: llm switch <tier> [--dev] [flags...]"
-      exit 1
+  start)
+    tier="default"
+    if [[ "$#" -gt 0 && "$1" != --* ]]; then
+      tier="$1"
+      shift || true
     fi
-    cmd_switch "$tier" "$@"
+    cmd_start "$tier" "$@"
     ;;
   stop)
     cmd_stop
@@ -331,28 +370,27 @@ case "$cmd" in
     ;;
   help|--help|-h)
     cat <<'HELP'
-llm — local LLM tier switcher
+llm — local LLM server manager
 
 Commands:
-  switch <tier> [--dev] [flags...]   Start a tier (workhorse, workhorse-full, interactive)
+  start [--dev] [flags...]           Start the default Qwen3.6 Q6 workhorse
                                      --dev uses the dev engine (fork with PRs)
-                                     Extra flags override tier defaults
+                                     Extra flags override defaults
   stop                               Stop the running server
   status                             Show what's running + engine + VRAM usage
 
   bench <model> [flags...]           Single-stream benchmark
   bench-parallel <model> [flags...]  Parallel scaling benchmark (1,2,4,8)
 
-Tiers:
-  workhorse       21 t/s  35B-A3B IQ4_NL (regex, 180K ctx), fast analysis
-  workhorse-full  15 t/s  35B-A3B IQ4_NL (-cmoe, 262K ctx), full context
+Default:
+  Qwen3.6 35B Q6, 262K ctx, no mmap, 3 GPU expert layers, 1024/65536 prompt cache
 
 Engines:
   stable (default)  tracks ggml-org/llama.cpp main, auto-rebuilt daily
   dev (--dev)       VisarDomi/llama.cpp fork, cherry-picked PRs
 
 Examples:
-  llm switch workhorse -c 65536
+  llm start
   llm status
   llm stop
 HELP
