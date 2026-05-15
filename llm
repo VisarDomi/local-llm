@@ -7,9 +7,8 @@ PIDFILE="$LLM_DIR/.llm-server.pid"
 LOGFILE="$LLM_DIR/.llm-server.log"
 STATEFILE="$LLM_DIR/.llm-server.state"
 UNIT_NAME="qwen36-q6-maxctx"
-UNIT="$UNIT_NAME.service"
+UNIT="$UNIT_NAME.scope"
 OLD_UNIT="local-llm-server.service"
-OLD_SCOPE="$UNIT_NAME.scope"
 
 STABLE_ENGINE="$LLM_DIR/engine/stable/llama.cpp/build/bin"
 DEV_ENGINE="$LLM_DIR/engine/dev/llama.cpp/build/bin"
@@ -40,6 +39,8 @@ get_pid() {
   main_pid=$(systemctl --user show "$UNIT" -p MainPID --value 2>/dev/null || true)
   if [[ -n "$main_pid" && "$main_pid" != "0" ]]; then
     echo "$main_pid"
+  elif pgrep -f "$LLM_DIR/engine/.*/llama-server.*${TIER_MODEL[default]}" >/dev/null 2>&1; then
+    pgrep -f "$LLM_DIR/engine/.*/llama-server.*${TIER_MODEL[default]}" | head -1
   elif [[ -f "$PIDFILE" ]]; then
     cat "$PIDFILE"
   else
@@ -114,17 +115,12 @@ wait_for_ready() {
 cmd_stop() {
   # Clean up old manual tuning scopes too, so `llm stop` unloads anything this
   # repo started during the Qwen3.6 experiments.
-  systemctl --user kill --kill-whom=all --signal=KILL "$OLD_SCOPE" 2>/dev/null || true
-  systemctl --user reset-failed "$OLD_SCOPE" 2>/dev/null || true
+  systemctl --user kill --kill-whom=all --signal=KILL "$UNIT" 2>/dev/null || true
+  systemctl --user reset-failed "$UNIT" 2>/dev/null || true
   systemctl --user stop "$OLD_UNIT" 2>/dev/null || true
   systemctl --user reset-failed "$OLD_UNIT" 2>/dev/null || true
 
-  if systemctl --user --quiet is-active "$UNIT" 2>/dev/null; then
-    systemctl --user stop "$UNIT" 2>/dev/null || true
-    systemctl --user reset-failed "$UNIT" 2>/dev/null || true
-    rm -f "$PIDFILE"
-    green "Stopped LLM server ($UNIT)"
-  elif is_running; then
+  if is_running; then
     local pid
     pid=$(get_pid)
     kill "$pid" 2>/dev/null || true
@@ -252,37 +248,23 @@ cmd_start() {
   dim "Engine: $engine ($server)"
   dim "Flags: $final_flags"
 
+  # Match the manual, validated command shape exactly: a transient user scope,
+  # hard cgroup limits, no cgroup swap, timeout wrapper, and core dumps disabled.
+  source "$HOME/.config/cuda-env.sh" 2>/dev/null || true
+
   systemd-run --user \
+    --scope \
     --expand-environment=no \
-    --unit="$UNIT" \
-    --collect \
+    --unit="$UNIT_NAME" \
     -p KillSignal=SIGKILL \
     -p SendSIGKILL=yes \
     -p TimeoutStopSec=2s \
     -p MemoryMax=30720M \
     -p MemoryHigh=28672M \
     -p MemorySwapMax=0 \
-    -p StandardOutput=append:"$LOGFILE" \
-    -p StandardError=append:"$LOGFILE" \
     timeout 60m \
-    bash -lc 'source "$HOME/.config/cuda-env.sh" 2>/dev/null || true; ulimit -c 0; exec "$@"' bash \
+    bash -lc 'ulimit -c 0; exec "$@"' bash \
     "$server" -m "$model" --port "$port" --host 127.0.0.1 $final_flags
-
-  local pid waited=0
-  pid=$(get_pid)
-  while [[ -z "$pid" || "$pid" == "0" ]] && (( waited < 10 )); do
-    sleep 1
-    pid=$(get_pid)
-    (( waited++ ))
-  done
-  echo "$pid" > "$PIDFILE"
-
-  if wait_for_ready "$port" "$model" "$pid"; then
-    green "Ready on http://localhost:$port/v1 ($engine engine)"
-  else
-    red "Server failed to become ready with $(basename "$model") within 180s. Check $LOGFILE"
-    exit 1
-  fi
 }
 
 cmd_bench() {

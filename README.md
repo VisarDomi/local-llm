@@ -47,7 +47,7 @@ CTX_CHECKPOINTS=32
 MemoryHigh=28672M
 MemoryMax=30720M
 MemorySwapMax=0
-systemd unit=qwen36-q6-maxctx.service
+systemd unit=qwen36-q6-maxctx.scope
 ```
 
 The active expert split keeps only layers `0,10,20` expert tensors on GPU and sends the remaining expert tensors to CPU:
@@ -58,9 +58,9 @@ blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU
 
 See `decisions.md` for the measurements and why this is the current default.
 
-`llm start` runs this shape through `systemd-run` with the same memory
-guards, sources `~/.config/cuda-env.sh`, disables core dumps with `ulimit -c 0`,
-and binds llama-server to `127.0.0.1:8100`.
+`llm start` runs this shape through the same `systemd-run --user --scope`
+command used during manual testing, sources `~/.config/cuda-env.sh`, disables
+core dumps with `ulimit -c 0`, and binds llama-server to `127.0.0.1:8100`.
 
 ## Notes
 

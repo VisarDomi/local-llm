@@ -32,7 +32,7 @@ CTX_CHECKPOINTS=32
 MemoryHigh=28672M
 MemoryMax=30720M
 MemorySwapMax=0
-systemd unit=qwen36-q6-maxctx.service
+systemd unit=qwen36-q6-maxctx.scope
 KV=f16/default
 parallel slots=1
 no mmap
@@ -177,8 +177,8 @@ Normal llama-server caching works well for sequential same-prefix follow-ups. It
 
 - `--no-mmap` is part of the default. The goal is no NVMe-backed model paging.
 - Keep OS swap available for the desktop, but keep llama's cgroup swap disabled with `MemorySwapMax=0`.
-- The `llm` script starts the server under a user systemd unit with memory limits.
-- `llm start` sources `~/.config/cuda-env.sh`, runs llama-server through `timeout 60m`, disables core dumps with `ulimit -c 0`, and binds to `127.0.0.1:8100`.
+- The `llm` script starts the server under the same user systemd scope shape used during manual testing.
+- `llm start` sources `~/.config/cuda-env.sh`, runs llama-server through `systemd-run --user --scope`, wraps it with `timeout 60m`, disables core dumps with `ulimit -c 0`, and binds to `127.0.0.1:8100`.
 - Operational flow is `llm start` and `llm stop`.
 - `llm stop` is the unload path.
 - CUDA 13.1.2 is the intended toolkit for this llama.cpp path; source `~/.config/cuda-env.sh` for manual testing.
