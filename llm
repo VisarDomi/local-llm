@@ -5,10 +5,16 @@ LLM_DIR="$HOME/Documents/work/ai/local-llm"
 MODEL_DIR="$LLM_DIR/models"
 PIDFILE="$LLM_DIR/.llm-server.pid"
 LOGFILE="$LLM_DIR/.llm-server.log"
+RUNTIME_LOGFILE="$LLM_DIR/.llama-server-runtime.log"
 STATEFILE="$LLM_DIR/.llm-server.state"
 UNIT_NAME="qwen36-q6-maxctx"
 UNIT="$UNIT_NAME.scope"
+PROXY_UNIT_NAME="go-llm-proxy"
+PROXY_UNIT="$PROXY_UNIT_NAME.service"
 OLD_UNIT="local-llm-server.service"
+PROXY_CONFIG="$LLM_DIR/proxy/go-llm-proxy.yaml"
+PROXY_BIN="$LLM_DIR/references/go-llm-proxy/go-llm-proxy"
+PROXY_PORT="8110"
 
 STABLE_ENGINE="$LLM_DIR/engine/stable/llama.cpp/build/bin"
 DEV_ENGINE="$LLM_DIR/engine/dev/llama.cpp/build/bin"
@@ -22,12 +28,12 @@ declare -A TIER_PORT=(
 )
 
 declare -A TIER_FLAGS=(
-  [default]="-ngl 99 -ot blk\.([1-9]|1[1-9]|2[1-9]|3[0-9])\.ffn_.*_exps\.weight=CPU --no-mmap -np 1 --cache-ram 1024 --checkpoint-every-n-tokens 65536 --ctx-checkpoints 32 --no-cache-idle-slots -c 262144 --jinja --reasoning off"
+  [default]="-ngl 99 -ot blk\.([3-9]|1[3-9]|2[2-9]|3[0-9])\.ffn_.*_exps\.weight=CPU --no-mmap -np 1 --cache-ram 512 --checkpoint-every-n-tokens 65536 --ctx-checkpoints 16 --no-cache-idle-slots -c 131072 --jinja --reasoning off"
 )
 
 # TODO: add an interactive "fast but dumb" tier once there is a model worth
 # keeping operationally. For now the CLI intentionally exposes only the
-# Qwen3.6 Q6 full-context workhorse.
+# Qwen3.6 Q6 operational workhorse.
 
 red()    { printf '\033[0;31m%s\033[0m\n' "$*"; }
 green()  { printf '\033[0;32m%s\033[0m\n' "$*"; }
@@ -112,7 +118,50 @@ wait_for_ready() {
   return 1
 }
 
+wait_for_proxy_down() {
+  local timeout=10 elapsed=0
+  while (( elapsed < timeout )); do
+    if ! curl -sf "http://localhost:$PROXY_PORT/v1/models" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    (( elapsed++ ))
+  done
+  return 1
+}
+
+start_proxy() {
+  if [[ ! -x "$PROXY_BIN" ]]; then
+    red "go-llm-proxy binary not found: $PROXY_BIN"
+    echo "Build it with: make -C $LLM_DIR/references/go-llm-proxy build"
+    exit 1
+  fi
+
+  if [[ ! -f "$PROXY_CONFIG" ]]; then
+    red "go-llm-proxy config not found: $PROXY_CONFIG"
+    exit 1
+  fi
+
+  systemctl --user kill --kill-whom=all --signal=KILL "$PROXY_UNIT" 2>/dev/null || true
+  systemctl --user reset-failed "$PROXY_UNIT" 2>/dev/null || true
+  wait_for_proxy_down || {
+    red "Proxy port $PROXY_PORT is still serving after stop; refusing to start a second proxy"
+    exit 1
+  }
+
+  systemd-run --user \
+    --expand-environment=no \
+    --unit="$PROXY_UNIT_NAME" \
+    -p KillSignal=SIGKILL \
+    -p SendSIGKILL=yes \
+    -p TimeoutStopSec=2s \
+    "$PROXY_BIN" -config "$PROXY_CONFIG"
+}
+
 cmd_stop() {
+  systemctl --user kill --kill-whom=all --signal=KILL "$PROXY_UNIT" 2>/dev/null || true
+  systemctl --user reset-failed "$PROXY_UNIT" 2>/dev/null || true
+
   # Clean up old manual tuning scopes too, so `llm stop` unloads anything this
   # repo started during the Qwen3.6 experiments.
   systemctl --user kill --kill-whom=all --signal=KILL "$UNIT" 2>/dev/null || true
@@ -155,11 +204,27 @@ cmd_status() {
     green "LLM server running (pid $pid)"
     echo "$tier_info"
     dim "Engine: $engine_info"
-    systemctl --user show "$UNIT" -p MemoryCurrent -p MemoryPeak -p MemoryHigh -p MemoryMax -p MemorySwapCurrent --value 2>/dev/null | \
-      awk 'NR==1{cur=$1} NR==2{peak=$1} NR==3{high=$1} NR==4{max=$1} NR==5{swap=$1} END{if (cur!="") printf "Memory: current=%s peak=%s high=%s max=%s swap=%s bytes\n", cur, peak, high, max, swap}'
+    systemctl --user show "$UNIT" -p MemoryCurrent -p MemoryPeak -p MemoryHigh -p MemoryMax -p MemorySwapCurrent -p MemorySwapMax 2>/dev/null | \
+      awk -F= '
+        $1=="MemoryCurrent"{cur=$2}
+        $1=="MemoryPeak"{peak=$2}
+        $1=="MemoryHigh"{high=$2}
+        $1=="MemoryMax"{max=$2}
+        $1=="MemorySwapCurrent"{swap=$2}
+        $1=="MemorySwapMax"{swapmax=$2}
+        END {
+          if (cur != "") {
+            printf "Memory: current=%s peak=%s high=%s max=%s swap=%s swapmax=%s bytes\n", cur, peak, high, max, swap, swapmax
+          }
+        }'
     if command -v nvidia-smi &>/dev/null; then
       nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits | \
         awk -F', ' '{printf "VRAM: %s / %s MB\n", $1, $2}'
+    fi
+    if curl -sf "http://localhost:$PROXY_PORT/v1/models" >/dev/null 2>&1; then
+      green "LLM proxy running on http://127.0.0.1:$PROXY_PORT/v1"
+    else
+      yellow "LLM proxy is not responding on port $PROXY_PORT"
     fi
   else
     rm -f "$PIDFILE"
@@ -242,11 +307,14 @@ cmd_start() {
 
   echo "# tier=$tier engine=$engine model=$(basename "$model") port=$port $(date -Iseconds)" > "$LOGFILE"
   echo "# flags: $final_flags" >> "$LOGFILE"
+  : > "$RUNTIME_LOGFILE"
 
   yellow "Starting $tier tier on port $port ($engine engine)..."
   dim "Model: $(basename "$model")"
   dim "Engine: $engine ($server)"
   dim "Flags: $final_flags"
+
+  start_proxy
 
   # Match the manual, validated command shape exactly: a transient user scope,
   # hard cgroup limits, no cgroup swap, timeout wrapper, and core dumps disabled.
@@ -263,8 +331,8 @@ cmd_start() {
     -p MemoryHigh=28672M \
     -p MemorySwapMax=0 \
     timeout 60m \
-    bash -lc 'ulimit -c 0; exec "$@"' bash \
-    "$server" -m "$model" --port "$port" --host 127.0.0.1 $final_flags
+    bash -lc 'ulimit -c 0; logfile="$1"; shift; "$@" 2>&1 | tee -a "$logfile"; exit "${PIPESTATUS[0]}"' bash \
+    "$RUNTIME_LOGFILE" "$server" -m "$model" --port "$port" --host 0.0.0.0 $final_flags
 }
 
 cmd_bench() {
@@ -364,16 +432,17 @@ llm — local LLM server manager
 
 Commands:
   start [--dev] [flags...]           Start the default Qwen3.6 Q6 workhorse
+                                     and local go-llm-proxy on port 8110
                                      --dev uses the dev engine (fork with PRs)
                                      Extra flags override defaults
-  stop                               Stop the running server
-  status                             Show what's running + engine + VRAM usage
+  stop                               Stop the running server and proxy
+  status                             Show what's running + proxy + VRAM usage
 
   bench <model> [flags...]           Single-stream benchmark
   bench-parallel <model> [flags...]  Parallel scaling benchmark (1,2,4,8)
 
 Default:
-  Qwen3.6 35B Q6, 262K ctx, no mmap, 3 GPU expert layers, 1024/65536 prompt cache
+  Qwen3.6 35B Q6, 131K ctx, no mmap, 8 GPU expert layers, 512/65536/16 prompt cache
 
 Engines:
   stable (default)  tracks ggml-org/llama.cpp main, auto-rebuilt daily

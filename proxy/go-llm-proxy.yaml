@@ -1,0 +1,18 @@
+listen: "127.0.0.1:8110"
+
+models:
+  - name: default
+    backend: http://127.0.0.1:8100/v1
+    model: Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf
+    timeout: 3600
+    context_window: 131072
+    supports_vision: false
+    responses_mode: translate
+
+  - name: Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf
+    backend: http://127.0.0.1:8100/v1
+    model: Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf
+    timeout: 3600
+    context_window: 131072
+    supports_vision: false
+    responses_mode: translate
